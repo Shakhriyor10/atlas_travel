@@ -1,9 +1,12 @@
 import asyncio
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Optional
+
+from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
@@ -29,6 +32,7 @@ class Flight:
     departure_time: datetime
     arrival_time: datetime
     price: int
+    link: Optional[str] = None
 
 
 # -------------------- Localisation --------------------
@@ -75,7 +79,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Неверный формат даты. Попробуйте снова (ДД.ММ.ГГГГ).",
         "no_flights_found": "Рейсы не найдены.",
         "flights_found_title": "Доступные рейсы:",
+        "times_in_tashkent": "Время указано по Ташкенту (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "Купить {flight} за {price}₽",
         "ask_return_date_choice": "Для обратного перелёта выбрать ближайшие рейсы или указать дату?",
         "ask_return_date_input": "Введите дату обратного вылета (ДД.ММ.ГГГГ):",
         "return_flights_title": "Доступные обратные рейсы:",
@@ -99,7 +105,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Sana formati noto'g'ri. Qayta urinib ko'ring (KK.OO.YYYY).",
         "no_flights_found": "Parvozlar topilmadi.",
         "flights_found_title": "Mavjud parvozlar:",
+        "times_in_tashkent": "Vaqt Toshkent vaqti bilan (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "{flight} reysini {price}₽ ga sotib olish",
         "ask_return_date_choice": "Qaytish uchun yaqin parvozlarni ko'rsataymi yoki sanani kiritasizmi?",
         "ask_return_date_input": "Qaytish sanasini kiriting (KK.OO.YYYY):",
         "return_flights_title": "Qaytish parvozlarga mos variantlar:",
@@ -123,7 +131,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Формати сана нодуруст аст. Лутфан боз кӯшиш кунед (РР.ММ.СССС).",
         "no_flights_found": "Парвозҳо ёфт нашуданд.",
         "flights_found_title": "Парвозҳои мавҷуда:",
+        "times_in_tashkent": "Вақт бо вақти Тошканд нишон дода шудааст (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "Хариди {flight} бо {price}₽",
         "ask_return_date_choice": "Барои парвози бозгашт парвозҳои наздикро нишон диҳам ё сана ворид мекунед?",
         "ask_return_date_input": "Санаи бозгаштро ворид кунед (РР.ММ.СССС):",
         "return_flights_title": "Парвозҳои бозгашт:",
@@ -147,7 +157,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Күн форматы қате. Қайта енгізіңіз (КК.АА.ЖЖЖЖ).",
         "no_flights_found": "Рейстер табылмады.",
         "flights_found_title": "Қол жетімді рейстер:",
+        "times_in_tashkent": "Уақыт Ташкент уақытымен көрсетілген (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "{flight} рейсін {price}₽-ға сатып алу",
         "ask_return_date_choice": "Қайту рейстерін көрсету ме әлде күнді енгізесіз бе?",
         "ask_return_date_input": "Қайту күнін енгізіңіз (КК.АА.ЖЖЖЖ):",
         "return_flights_title": "Қайту рейстері:",
@@ -171,7 +183,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Дата форматы туура эмес. Кайрадан жазыңыз (КК.АА.ЖЖЖЖ).",
         "no_flights_found": "Каттамдар табылган жок.",
         "flights_found_title": "Мүмкүн болгон каттамдар:",
+        "times_in_tashkent": "Убакыт Ташкент убактысы боюнча көрсөтүлдү (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "{flight} рейсин {price}₽га сатып алуу",
         "ask_return_date_choice": "Кайтуу үчүн жакынкы каттамдарды көрсөтөйүнбү же датаны киретесизби?",
         "ask_return_date_input": "Кайтуу датасын жазыңыз (КК.АА.ЖЖЖЖ):",
         "return_flights_title": "Кайтуу каттамдар:",
@@ -195,13 +209,24 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Invalid date format. Please try again (DD.MM.YYYY).",
         "no_flights_found": "No flights found.",
         "flights_found_title": "Available flights:",
+        "times_in_tashkent": "Times shown in Tashkent time (UTC+5).",
         "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "buy_ticket": "Buy {flight} for {price}₽",
         "ask_return_date_choice": "For the return trip, show next flights or enter a date?",
         "ask_return_date_input": "Enter the return date (DD.MM.YYYY):",
         "return_flights_title": "Return flights:",
         "search_complete": "Thank you! Send /start to search again.",
     },
 }
+
+
+TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
+
+
+TRAVELPAYOUTS_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN")
+TRAVELPAYOUTS_MARKER = os.getenv("TRAVELPAYOUTS_MARKER")
+TRAVELPAYOUTS_CURRENCY = os.getenv("TRAVELPAYOUTS_CURRENCY", "rub")
+TRAVELPAYOUTS_TIMEOUT = float(os.getenv("TRAVELPAYOUTS_TIMEOUT", "10"))
 
 
 def t(lang: str, key: str, **kwargs) -> str:
@@ -237,7 +262,7 @@ AIRPORTS_BY_CITY: Dict[str, List[Dict[str, str]]] = {
 
 
 def generate_sample_flights() -> List[Flight]:
-    now = datetime.now().replace(minute=0, second=0, microsecond=0)
+    now = datetime.now(tz=TASHKENT_TZ).replace(minute=0, second=0, microsecond=0)
     flights: List[Flight] = []
     routes = [
         ("SVO", "TAS", "Uzbekistan Airways"),
@@ -256,6 +281,15 @@ def generate_sample_flights() -> List[Flight]:
         for offset in range(1, 6):
             departure = now + timedelta(days=offset, hours=idx % 5)
             arrival = departure + timedelta(hours=3)
+            depart_date_str = departure.astimezone(TASHKENT_TZ).strftime("%Y-%m-%d")
+            params = {
+                "origin": dep,
+                "destination": arr,
+                "depart_date": depart_date_str,
+            }
+            if TRAVELPAYOUTS_MARKER:
+                params["marker"] = TRAVELPAYOUTS_MARKER
+            link = f"https://www.aviasales.com/search?{urlencode(params)}"
             flights.append(
                 Flight(
                     flight_no=f"{airline.split()[0][:2].upper()}{idx:02d}{offset}",
@@ -265,6 +299,7 @@ def generate_sample_flights() -> List[Flight]:
                     departure_time=departure,
                     arrival_time=arrival,
                     price=20000 + (idx * 1500) + offset * 500,
+                    link=link,
                 )
             )
     return flights
@@ -273,10 +308,56 @@ def generate_sample_flights() -> List[Flight]:
 FLIGHT_SCHEDULE = generate_sample_flights()
 
 
-TRAVELPAYOUTS_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN")
-TRAVELPAYOUTS_MARKER = os.getenv("TRAVELPAYOUTS_MARKER")
-TRAVELPAYOUTS_CURRENCY = os.getenv("TRAVELPAYOUTS_CURRENCY", "rub")
-TRAVELPAYOUTS_TIMEOUT = float(os.getenv("TRAVELPAYOUTS_TIMEOUT", "10"))
+def locale_for_language(lang: str) -> str:
+    if lang in {"ru", "kk", "ky", "tg"}:
+        return "ru"
+    if lang == "uz":
+        return "uz"
+    return "en"
+
+
+async def fetch_airports_from_api(city_name: str, lang: str) -> List[Dict[str, str]]:
+    if not city_name:
+        return []
+
+    url = "https://autocomplete.travelpayouts.com/places2"
+    params = {
+        "term": city_name,
+        "locale": locale_for_language(lang),
+        "types[]": "airport",
+    }
+
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=TRAVELPAYOUTS_TIMEOUT)) as session:
+            async with session.get(url, params=params) as response:
+                if response.status != 200:
+                    return []
+                payload = await response.json()
+    except Exception:
+        return []
+
+    normalized_city = city_name.casefold()
+    airports: List[Dict[str, str]] = []
+    seen_codes = set()
+
+    for item in payload:
+        if not isinstance(item, dict) or item.get("type") != "airport":
+            continue
+
+        code = (item.get("code") or "").upper()
+        if not code or code in seen_codes:
+            continue
+
+        city = item.get("city_name") or ""
+        city_norm = city.casefold()
+        if normalized_city and normalized_city not in city_norm and city_norm not in normalized_city:
+            continue
+
+        name = item.get("name") or code
+        airports.append({"code": code, "name": name, "city": city})
+        seen_codes.add(code)
+
+    return airports[:10]
 
 
 def parse_iso_datetime(value: Optional[str]) -> datetime:
@@ -284,9 +365,16 @@ def parse_iso_datetime(value: Optional[str]) -> datetime:
         raise ValueError("Datetime value is empty")
     normalized = value.replace("Z", "+00:00")
     dt = datetime.fromisoformat(normalized)
-    if dt.tzinfo is not None:
-        dt = dt.astimezone().replace(tzinfo=None)
-    return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TASHKENT_TZ)
+
+
+def ensure_tashkent(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        # Treat naive timestamps as UTC before converting to Tashkent time.
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TASHKENT_TZ)
 
 
 async def fetch_live_flights(
@@ -337,6 +425,11 @@ async def fetch_live_flights(
             continue
 
         try:
+            price_value = int(float(price))
+        except (TypeError, ValueError):
+            continue
+
+        try:
             departure_time = parse_iso_datetime(departure_at)
         except ValueError:
             continue
@@ -350,16 +443,28 @@ async def fetch_live_flights(
             except ValueError:
                 arrival_time = departure_time + timedelta(hours=3)
         else:
-            duration_minutes = item.get("duration")
-            if isinstance(duration_minutes, (int, float)):
-                arrival_time = departure_time + timedelta(minutes=duration_minutes)
-            else:
+            duration_minutes = item.get("duration") or item.get("duration_to")
+            try:
+                duration_value = int(float(duration_minutes))
+            except (TypeError, ValueError):
                 arrival_time = departure_time + timedelta(hours=3)
+            else:
+                arrival_time = departure_time + timedelta(minutes=duration_value)
 
         airline_code = (item.get("airline") or "").upper()
         airline_name = AIRLINE_NAMES.get(airline_code, airline_code or "Unknown carrier")
         flight_number = item.get("flight_number")
         flight_no = f"{airline_code}{flight_number}" if flight_number else (airline_code or "N/A")
+        link = item.get("link")
+        if not link:
+            fallback_params = {
+                "origin": departure_airport,
+                "destination": arrival_airport,
+                "depart_date": departure_time.strftime("%Y-%m-%d"),
+            }
+            if TRAVELPAYOUTS_MARKER:
+                fallback_params["marker"] = TRAVELPAYOUTS_MARKER
+            link = f"https://www.aviasales.com/search?{urlencode(fallback_params)}"
 
         flights.append(
             Flight(
@@ -369,14 +474,18 @@ async def fetch_live_flights(
                 arrival_airport=arrival_airport,
                 departure_time=departure_time,
                 arrival_time=arrival_time,
-                price=int(price),
+                price=price_value,
+                link=link,
             )
         )
 
     return flights
 
 
-def find_airports(city_name: str) -> List[Dict[str, str]]:
+async def find_airports(city_name: str, lang: str) -> List[Dict[str, str]]:
+    api_airports = await fetch_airports_from_api(city_name, lang)
+    if api_airports:
+        return api_airports
     return AIRPORTS_BY_CITY.get(city_name.lower(), [])
 
 
@@ -386,6 +495,9 @@ async def find_flights(
     date: Optional[datetime] = None,
     limit: int = 5,
 ) -> List[Flight]:
+    departure_airport = departure_airport.upper()
+    arrival_airport = arrival_airport.upper()
+
     live_flights = await fetch_live_flights(departure_airport, arrival_airport, date, limit)
     if live_flights:
         return live_flights[:limit]
@@ -396,7 +508,7 @@ async def find_flights(
         if flight.departure_airport == departure_airport
         and flight.arrival_airport == arrival_airport
         and (date is None or flight.departure_time.date() == date.date())
-        and flight.departure_time >= datetime.now()
+        and flight.departure_time >= datetime.now(tz=TASHKENT_TZ)
     ]
     flights.sort(key=lambda f: f.departure_time)
     if date is None:
@@ -440,10 +552,18 @@ def trip_type_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 def airports_keyboard(airports: List[Dict[str, str]]) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=f"{item['name']} ({item['code']})", callback_data=f"apt:{item['code']}")]
-        for item in airports
-    ]
+    buttons = []
+    for item in airports:
+        code = (item.get("code") or "").upper()
+        if not code:
+            continue
+        name = item.get("name") or code
+        city = item.get("city") or ""
+        if city and city not in name:
+            label = f"{city} — {name} ({code})"
+        else:
+            label = f"{name} ({code})"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"apt:{code}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -495,11 +615,12 @@ async def choose_trip_type(callback: CallbackQuery, state: FSMContext) -> None:
 async def ask_departure_airport(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = data.get("language", "en")
-    airports = find_airports(message.text.strip())
+    city = message.text.strip()
+    airports = await find_airports(city, lang)
     if not airports:
         await message.answer(t(lang, "no_airports_found"))
         return
-    await state.update_data(departure_city=message.text.strip(), airports=airports)
+    await state.update_data(departure_city=city, temp_airports=airports)
     await message.answer(t(lang, "choose_airport"), reply_markup=airports_keyboard(airports))
     await state.set_state(SearchState.choosing_departure_airport)
 
@@ -507,10 +628,26 @@ async def ask_departure_airport(message: Message, state: FSMContext) -> None:
 async def select_departure_airport(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     lang = data.get("language", "en")
-    airport_code = callback.data.split(":", 1)[1]
-    await state.update_data(departure_airport=airport_code)
+    airport_code = callback.data.split(":", 1)[1].upper()
+    airports: List[Dict[str, str]] = data.get("temp_airports") or []
+    selected = next((item for item in airports if item.get("code") == airport_code), None)
+    if not selected:
+        await callback.answer()
+        await callback.message.answer(t(lang, "no_airports_found"))
+        return
+
+    await state.update_data(
+        departure_airport=airport_code,
+        departure_airport_name=selected.get("name"),
+        temp_airports=None,
+    )
+
     await callback.answer()
-    await callback.message.edit_text(t(lang, "choose_airport"))
+    selection_name = selected.get("name") or airport_code
+    city = selected.get("city")
+    if city and city not in selection_name:
+        selection_name = f"{city} — {selection_name}"
+    await callback.message.edit_text(f"{selection_name} ({airport_code})")
     await callback.message.answer(t(lang, "ask_arrival_city"))
     await state.set_state(SearchState.entering_arrival_city)
 
@@ -518,11 +655,12 @@ async def select_departure_airport(callback: CallbackQuery, state: FSMContext) -
 async def ask_arrival_airport(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = data.get("language", "en")
-    airports = find_airports(message.text.strip())
+    city = message.text.strip()
+    airports = await find_airports(city, lang)
     if not airports:
         await message.answer(t(lang, "no_airports_found"))
         return
-    await state.update_data(arrival_city=message.text.strip(), arrival_airports=airports)
+    await state.update_data(arrival_city=city, temp_airports=airports)
     await message.answer(t(lang, "choose_airport"), reply_markup=airports_keyboard(airports))
     await state.set_state(SearchState.choosing_arrival_airport)
 
@@ -530,10 +668,26 @@ async def ask_arrival_airport(message: Message, state: FSMContext) -> None:
 async def select_arrival_airport(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     lang = data.get("language", "en")
-    airport_code = callback.data.split(":", 1)[1]
-    await state.update_data(arrival_airport=airport_code)
+    airport_code = callback.data.split(":", 1)[1].upper()
+    airports: List[Dict[str, str]] = data.get("temp_airports") or []
+    selected = next((item for item in airports if item.get("code") == airport_code), None)
+    if not selected:
+        await callback.answer()
+        await callback.message.answer(t(lang, "no_airports_found"))
+        return
+
+    await state.update_data(
+        arrival_airport=airport_code,
+        arrival_airport_name=selected.get("name"),
+        temp_airports=None,
+    )
+
     await callback.answer()
-    await callback.message.edit_text(t(lang, "choose_airport"))
+    selection_name = selected.get("name") or airport_code
+    city = selected.get("city")
+    if city and city not in selection_name:
+        selection_name = f"{city} — {selection_name}"
+    await callback.message.edit_text(f"{selection_name} ({airport_code})")
     await callback.message.answer(
         t(lang, "ask_date_choice"),
         reply_markup=date_choice_keyboard(lang, prefix="depdate"),
@@ -557,10 +711,16 @@ async def handle_departure_date_input(message: Message, state: FSMContext) -> No
     data = await state.get_data()
     lang = data.get("language", "en")
     try:
-        departure_date = datetime.strptime(message.text.strip(), "%d.%m.%Y")
+        parsed_date = datetime.strptime(message.text.strip(), "%d.%m.%Y")
     except ValueError:
         await message.answer(t(lang, "invalid_date_format"))
         return
+    departure_date = datetime(
+        parsed_date.year,
+        parsed_date.month,
+        parsed_date.day,
+        tzinfo=TASHKENT_TZ,
+    )
     await state.update_data(departure_date=departure_date)
     await present_flights(message, state, is_return=False, date=departure_date)
 
@@ -581,17 +741,23 @@ async def handle_return_date_input(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = data.get("language", "en")
     try:
-        return_date = datetime.strptime(message.text.strip(), "%d.%m.%Y")
+        parsed_date = datetime.strptime(message.text.strip(), "%d.%m.%Y")
     except ValueError:
         await message.answer(t(lang, "invalid_date_format"))
         return
+    return_date = datetime(
+        parsed_date.year,
+        parsed_date.month,
+        parsed_date.day,
+        tzinfo=TASHKENT_TZ,
+    )
     await state.update_data(return_date=return_date)
     await present_flights(message, state, is_return=True, date=return_date)
 
 
 def format_flight_line(lang: str, flight: Flight) -> str:
-    departure_time = flight.departure_time.strftime("%d.%m %H:%M")
-    arrival_time = flight.arrival_time.strftime("%d.%m %H:%M")
+    departure_time = ensure_tashkent(flight.departure_time).strftime("%d.%m %H:%M")
+    arrival_time = ensure_tashkent(flight.arrival_time).strftime("%d.%m %H:%M")
     return t(
         lang,
         "flight_line",
@@ -623,9 +789,25 @@ async def present_flights(
     if not flights:
         await message_source.answer(t(lang, "no_flights_found"))
     else:
-        lines = [t(lang, "return_flights_title" if is_return else "flights_found_title")]
+        title_key = "return_flights_title" if is_return else "flights_found_title"
+        lines = [t(lang, title_key), t(lang, "times_in_tashkent")]
         lines.extend(format_flight_line(lang, flight) for flight in flights)
-        await message_source.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+
+        buttons = []
+        for flight in flights:
+            if not flight.link:
+                continue
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=t(lang, "buy_ticket", flight=flight.flight_no, price=flight.price),
+                        url=flight.link,
+                    )
+                ]
+            )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+        await message_source.answer("\n".join(lines), reply_markup=keyboard)
 
     trip_type: TripType = data.get("trip_type", TripType.ONE_WAY)
     if trip_type == TripType.ROUND_TRIP and not is_return:
