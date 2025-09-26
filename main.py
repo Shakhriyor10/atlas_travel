@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -6,7 +7,7 @@ from typing import Dict, List, Optional
 from aiogram.client.default import DefaultBotProperties
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -50,6 +51,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Введите город вылета:",
         "ask_arrival_city": "Введите город прибытия:",
         "no_airports_found": "Аэропорты в этом городе не найдены. Попробуйте другой город.",
+        "available_cities_hint": "Попробуйте один из поддерживаемых городов: {cities}",
         "choose_airport": "Выберите аэропорт:",
         "ask_date_choice": "Показать ближайшие рейсы или указать дату?",
         "nearest_flights": "Ближайшие рейсы",
@@ -58,7 +60,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Неверный формат даты. Попробуйте снова (ДД.ММ.ГГГГ).",
         "no_flights_found": "Рейсы не найдены.",
         "flights_found_title": "Доступные рейсы:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "Для обратного перелёта выбрать ближайшие рейсы или указать дату?",
         "ask_return_date_input": "Введите дату обратного вылета (ДД.ММ.ГГГГ):",
         "return_flights_title": "Доступные обратные рейсы:",
@@ -74,6 +76,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Jo'nash shahrini kiriting:",
         "ask_arrival_city": "Yetib borish shahrini kiriting:",
         "no_airports_found": "Bu shaharda aeroport topilmadi. Boshqa shahar kiriting.",
+        "available_cities_hint": "Quyidagi qo'llab-quvvatlanadigan shaharlardan birini sinab ko'ring: {cities}",
         "choose_airport": "Aeroportni tanlang:",
         "ask_date_choice": "Yaquin parvozlarni ko'rsatishmi yoki sanani kiritasizmi?",
         "nearest_flights": "Eng yaqin parvozlar",
@@ -82,7 +85,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Sana formati noto'g'ri. Qayta urinib ko'ring (KK.OO.YYYY).",
         "no_flights_found": "Parvozlar topilmadi.",
         "flights_found_title": "Mavjud parvozlar:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "Qaytish uchun yaqin parvozlarni ko'rsataymi yoki sanani kiritasizmi?",
         "ask_return_date_input": "Qaytish sanasini kiriting (KK.OO.YYYY):",
         "return_flights_title": "Qaytish parvozlarga mos variantlar:",
@@ -98,6 +101,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Шаҳри парвозро ворид кунед:",
         "ask_arrival_city": "Шаҳри фурудро ворид кунед:",
         "no_airports_found": "Дар ин шаҳр фурудгоҳ ёфт нашуд. Шаҳри дигарро санҷед.",
+        "available_cities_hint": "Лутфан аз шаҳрҳои зерин истифода баред: {cities}",
         "choose_airport": "Фурудгоҳро интихоб кунед:",
         "ask_date_choice": "Парвозҳои наздикро нишон диҳам ё сана ворид мекунед?",
         "nearest_flights": "Парвозҳои наздик",
@@ -106,7 +110,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Формати сана нодуруст аст. Лутфан боз кӯшиш кунед (РР.ММ.СССС).",
         "no_flights_found": "Парвозҳо ёфт нашуданд.",
         "flights_found_title": "Парвозҳои мавҷуда:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "Барои парвози бозгашт парвозҳои наздикро нишон диҳам ё сана ворид мекунед?",
         "ask_return_date_input": "Санаи бозгаштро ворид кунед (РР.ММ.СССС):",
         "return_flights_title": "Парвозҳои бозгашт:",
@@ -122,6 +126,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Ұшып шығатын қаланы енгізіңіз:",
         "ask_arrival_city": "Ұшып баратын қаланы енгізіңіз:",
         "no_airports_found": "Бұл қалада әуежай табылмады. Басқа қала енгізіңіз.",
+        "available_cities_hint": "Төмендегі қолдаулы қалалардың бірін қолданып көріңіз: {cities}",
         "choose_airport": "Әуежайды таңдаңыз:",
         "ask_date_choice": "Жақын рейстерді көрсету ме әлде күнді енгізесіз бе?",
         "nearest_flights": "Жақын рейстер",
@@ -130,7 +135,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Күн форматы қате. Қайта енгізіңіз (КК.АА.ЖЖЖЖ).",
         "no_flights_found": "Рейстер табылмады.",
         "flights_found_title": "Қол жетімді рейстер:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "Қайту рейстерін көрсету ме әлде күнді енгізесіз бе?",
         "ask_return_date_input": "Қайту күнін енгізіңіз (КК.АА.ЖЖЖЖ):",
         "return_flights_title": "Қайту рейстері:",
@@ -146,6 +151,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Учуп чыгуучу шаарды жазыңыз:",
         "ask_arrival_city": "Учуп баруучу шаарды жазыңыз:",
         "no_airports_found": "Бул шаарда аэропорт табылган жок. Башка шаар жазыңыз.",
+        "available_cities_hint": "Төмөнкү колдоого алынган шаарлардын бирин тандап көрүңүз: {cities}",
         "choose_airport": "Аэропортту тандаңыз:",
         "ask_date_choice": "Жакынкы каттамдарды көрсөтөйүнбү же датаны киретесизби?",
         "nearest_flights": "Жакынкы каттамдар",
@@ -154,7 +160,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Дата форматы туура эмес. Кайрадан жазыңыз (КК.АА.ЖЖЖЖ).",
         "no_flights_found": "Каттамдар табылган жок.",
         "flights_found_title": "Мүмкүн болгон каттамдар:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "Кайтуу үчүн жакынкы каттамдарды көрсөтөйүнбү же датаны киретесизби?",
         "ask_return_date_input": "Кайтуу датасын жазыңыз (КК.АА.ЖЖЖЖ):",
         "return_flights_title": "Кайтуу каттамдар:",
@@ -170,6 +176,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ask_departure_city": "Enter your departure city:",
         "ask_arrival_city": "Enter your destination city:",
         "no_airports_found": "No airports found in that city. Try another one.",
+        "available_cities_hint": "Try one of the supported cities: {cities}",
         "choose_airport": "Select an airport:",
         "ask_date_choice": "Show next available flights or enter a specific date?",
         "nearest_flights": "Next flights",
@@ -178,7 +185,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "invalid_date_format": "Invalid date format. Please try again (DD.MM.YYYY).",
         "no_flights_found": "No flights found.",
         "flights_found_title": "Available flights:",
-        "flight_line": "{flight} • {departure} → {arrival} • {price}₽",
+        "flight_line": "{flight} • {departure} → {arrival} • {price}",
         "ask_return_date_choice": "For the return trip, show next flights or enter a date?",
         "ask_return_date_input": "Enter the return date (DD.MM.YYYY):",
         "return_flights_title": "Return flights:",
@@ -219,6 +226,54 @@ AIRPORTS_BY_CITY: Dict[str, List[Dict[str, str]]] = {
 }
 
 
+CITY_ALIASES: Dict[str, str] = {
+    "moskva": "moscow",
+    "г москва": "москва",
+    "toshkent": "tashkent",
+    "toshkent shahar": "tashkent",
+    "toshkent shahri": "tashkent",
+    "tashkent city": "tashkent",
+    "tashkent shahri": "tashkent",
+    "самарқанд": "самарканд",
+    "samarqand": "samarkand",
+    "samarcand": "samarkand",
+    "samarqand shahar": "samarkand",
+    "samarqand shahri": "samarkand",
+    "samarkand city": "samarkand",
+    "samarqand city": "samarkand",
+    "nursultan": "astana",
+    "nur sultan": "astana",
+    "nur-sultan": "astana",
+    "astana city": "astana",
+    "almati": "almaty",
+    "almatu": "almaty",
+    "almatau": "almaty",
+    "almaty city": "almaty",
+    "bishkek city": "bishkek",
+    "bishkek shaar": "bishkek",
+    "bishkek shaarı": "bishkek",
+    "bishkek shahri": "bishkek",
+    "dushanbe city": "dushanbe",
+    "dushanbe shahri": "dushanbe",
+}
+
+
+CURRENCY_BY_LANGUAGE: Dict[str, str] = {
+    "ru": "рубль",
+    "uz": "УЗС",
+    "tg": "сомони",
+    "kk": "тенге",
+    "ky": "сом",
+    "en": "RUB",
+}
+
+
+USER_LANGUAGE_PREFERENCES: Dict[int, str] = {}
+
+
+CITY_SUFFIXES_PATTERN = re.compile(r"\b(city|shahar|shahri|shaar|shaarı)\b", flags=re.IGNORECASE)
+
+
 def generate_sample_flights() -> List[Flight]:
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
     flights: List[Flight] = []
@@ -256,8 +311,72 @@ def generate_sample_flights() -> List[Flight]:
 FLIGHT_SCHEDULE = generate_sample_flights()
 
 
+def normalize_city_name(city_name: str) -> str:
+    cleaned = city_name.strip().lower()
+    cleaned = cleaned.replace("ё", "е")
+    cleaned = re.sub(r"[.,]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    tokens: List[str] = []
+    skip_tokens = {"город", "гор", "г", "city", "shahar", "shahr", "sh"}
+    for token in cleaned.split():
+        bare = token.strip(".")
+        if bare in skip_tokens:
+            continue
+        tokens.append(bare)
+    normalized = " ".join(tokens) if tokens else cleaned
+    normalized = normalized.replace("-", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return CITY_ALIASES.get(normalized, normalized)
+
+
 def find_airports(city_name: str) -> List[Dict[str, str]]:
-    return AIRPORTS_BY_CITY.get(city_name.lower(), [])
+    normalized = normalize_city_name(city_name)
+    airports = AIRPORTS_BY_CITY.get(normalized)
+    if airports:
+        return airports
+    normalized_no_space = normalized.replace(" ", "")
+    for key, items in AIRPORTS_BY_CITY.items():
+        if key.replace(" ", "") == normalized_no_space:
+            return items
+    alias_target = CITY_ALIASES.get(normalized)
+    if alias_target:
+        return AIRPORTS_BY_CITY.get(alias_target, [])
+    return []
+
+
+def suggest_cities(city_name: str, limit: int = 5) -> List[str]:
+    normalized = normalize_city_name(city_name)
+    unique: Dict[str, str] = {}
+    for key in AIRPORTS_BY_CITY.keys():
+        display = format_city_display_name(key)
+        normalized_key = normalize_city_name(key)
+        if normalized_key not in unique:
+            unique[normalized_key] = display
+    suggestions = [
+        display
+        for norm_key, display in unique.items()
+        if normalized and (normalized in norm_key or norm_key in normalized)
+    ]
+    if not suggestions:
+        suggestions = list(unique.values())
+    return suggestions[:limit]
+
+
+def get_currency_label(lang: str) -> str:
+    return CURRENCY_BY_LANGUAGE.get(lang, CURRENCY_BY_LANGUAGE["en"])
+
+
+def format_price(amount: int, lang: str) -> str:
+    formatted = f"{amount:,}".replace(",", " ")
+    return f"{formatted} {get_currency_label(lang)}"
+
+
+def format_city_display_name(raw_name: str) -> str:
+    cleaned = CITY_SUFFIXES_PATTERN.sub("", raw_name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        cleaned = raw_name
+    return cleaned.title()
 
 
 def find_flights(
@@ -335,22 +454,44 @@ def date_choice_keyboard(lang: str, prefix: str) -> InlineKeyboardMarkup:
 # -------------------- Bot handlers --------------------
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
+    user_lang = USER_LANGUAGE_PREFERENCES.get(message.from_user.id if message.from_user else 0)
+    if user_lang:
+        await state.update_data(language=user_lang)
+        await state.set_state(SearchState.choosing_trip)
+        await message.answer(t(user_lang, "start_greeting"))
+        await message.answer(
+            t(user_lang, "choose_trip_type"), reply_markup=trip_type_keyboard(user_lang)
+        )
+    else:
+        await state.set_state(LanguageState.choosing)
+        await message.answer(
+            "\n".join([
+                TRANSLATIONS["en"]["start_greeting"],
+                TRANSLATIONS["ru"]["start_greeting"],
+            ]),
+            reply_markup=language_keyboard(),
+        )
+
+
+async def cmd_language(message: Message, state: FSMContext) -> None:
+    preferred_lang = USER_LANGUAGE_PREFERENCES.get(message.from_user.id if message.from_user else 0, "en")
+    await state.clear()
     await state.set_state(LanguageState.choosing)
+    await state.update_data(language=preferred_lang)
     await message.answer(
-        "\n".join([
-            TRANSLATIONS["en"]["start_greeting"],
-            TRANSLATIONS["ru"]["start_greeting"],
-        ]),
-        reply_markup=language_keyboard(),
+        t(preferred_lang, "choose_language"), reply_markup=language_keyboard()
     )
 
 
 async def choose_language(callback: CallbackQuery, state: FSMContext) -> None:
     lang_code = callback.data.split(":", 1)[1]
     await state.update_data(language=lang_code)
+    if callback.from_user:
+        USER_LANGUAGE_PREFERENCES[callback.from_user.id] = lang_code
     await callback.message.edit_text(t(lang_code, "language_set"))
     await callback.answer()
     await state.set_state(SearchState.choosing_trip)
+    await callback.message.answer(t(lang_code, "start_greeting"))
     await callback.message.answer(
         t(lang_code, "choose_trip_type"), reply_markup=trip_type_keyboard(lang_code)
     )
@@ -374,6 +515,11 @@ async def ask_departure_airport(message: Message, state: FSMContext) -> None:
     airports = find_airports(message.text.strip())
     if not airports:
         await message.answer(t(lang, "no_airports_found"))
+        suggestions = suggest_cities(message.text.strip())
+        if suggestions:
+            await message.answer(
+                t(lang, "available_cities_hint", cities=", ".join(suggestions))
+            )
         return
     await state.update_data(departure_city=message.text.strip(), airports=airports)
     await message.answer(t(lang, "choose_airport"), reply_markup=airports_keyboard(airports))
@@ -397,6 +543,11 @@ async def ask_arrival_airport(message: Message, state: FSMContext) -> None:
     airports = find_airports(message.text.strip())
     if not airports:
         await message.answer(t(lang, "no_airports_found"))
+        suggestions = suggest_cities(message.text.strip())
+        if suggestions:
+            await message.answer(
+                t(lang, "available_cities_hint", cities=", ".join(suggestions))
+            )
         return
     await state.update_data(arrival_city=message.text.strip(), arrival_airports=airports)
     await message.answer(t(lang, "choose_airport"), reply_markup=airports_keyboard(airports))
@@ -474,7 +625,7 @@ def format_flight_line(lang: str, flight: Flight) -> str:
         flight=f"{flight.flight_no} {flight.airline}",
         departure=f"{flight.departure_airport} {departure_time}",
         arrival=f"{flight.arrival_airport} {arrival_time}",
-        price=flight.price,
+        price=format_price(flight.price, lang),
     )
 
 
@@ -514,6 +665,7 @@ async def present_flights(
 # -------------------- Dispatcher setup --------------------
 def register_handlers(dp: Dispatcher) -> None:
     dp.message.register(cmd_start, CommandStart())
+    dp.message.register(cmd_language, Command("language"))
     dp.callback_query.register(choose_language, F.data.startswith("lang:"), LanguageState.choosing)
     dp.callback_query.register(
         choose_trip_type, F.data.startswith("trip:"), SearchState.choosing_trip
