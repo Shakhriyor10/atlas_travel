@@ -1,17 +1,8 @@
-"""Atlas Travel Telegram bot.
-
-This module provides a multi-language Telegram bot that lets users search for
-flight itineraries via an external flights API. The bot guides the user through
-language selection, origin and destination input, date selection, and displays
-the closest flight options returned by the API.
-
-Environment variables:
-    TELEGRAM_BOT_TOKEN: Token obtained from BotFather to run the Telegram bot.
-    TEQUILA_API_KEY: Kiwi.com (Tequila) API key used to query flight offers.
-"""
+"""Atlas Travel Telegram bot implemented with aiogram."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -19,26 +10,27 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-# Enable logging so we can trace the bot's behaviour when running on a server.
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 LOGGER = logging.getLogger(__name__)
 
-# Conversation states
-CHOOSING_LANGUAGE, ORIGIN, DESTINATION, DATE = range(4)
+
+class FlightSearch(StatesGroup):
+    """FSM states for flight search conversation."""
+
+    language = State()
+    origin = State()
+    destination = State()
+    date = State()
 
 
 @dataclass
@@ -57,14 +49,43 @@ class Flight:
     def format_for_user(self, language: str) -> str:
         """Return a human-readable message for the user."""
 
-        # Localised message fragments.
         templates = {
-            "ru": "Авиакомпания {airline} {flight_number}\nВылет: {dep_airport} {dep_time}\nПрилет: {arr_airport} {arr_time}\nЦена: {price} {currency}",
-            "uz": "Aviakompaniya {airline} {flight_number}\nJo'nash: {dep_airport} {dep_time}\nYetib kelish: {arr_airport} {arr_time}\nNarxi: {price} {currency}",
-            "tg": "Ширкати ҳавопаймоии {airline} {flight_number}\nПарвоз: {dep_airport} {dep_time}\nФуруд: {arr_airport} {arr_time}\nНарх: {price} {currency}",
-            "kk": "Әуе компаниясы {airline} {flight_number}\nҰшу: {dep_airport} {dep_time}\nҚону: {arr_airport} {arr_time}\nБағасы: {price} {currency}",
-            "ky": "Авиакомпания {airline} {flight_number}\nУчуу: {dep_airport} {dep_time}\nКонуу: {arr_airport} {arr_time}\nБаасы: {price} {currency}",
-            "en": "Airline {airline} {flight_number}\nDeparture: {dep_airport} {dep_time}\nArrival: {arr_airport} {arr_time}\nPrice: {price} {currency}",
+            "ru": (
+                "Авиакомпания {airline} {flight_number}\n"
+                "Вылет: {dep_airport} {dep_time}\n"
+                "Прилет: {arr_airport} {arr_time}\n"
+                "Цена: {price} {currency}"
+            ),
+            "uz": (
+                "Aviakompaniya {airline} {flight_number}\n"
+                "Jo'nash: {dep_airport} {dep_time}\n"
+                "Yetib kelish: {arr_airport} {arr_time}\n"
+                "Narxi: {price} {currency}"
+            ),
+            "tg": (
+                "Ширкати ҳавопаймоии {airline} {flight_number}\n"
+                "Парвоз: {dep_airport} {dep_time}\n"
+                "Фуруд: {arr_airport} {arr_time}\n"
+                "Нарх: {price} {currency}"
+            ),
+            "kk": (
+                "Әуе компаниясы {airline} {flight_number}\n"
+                "Ұшу: {dep_airport} {dep_time}\n"
+                "Қону: {arr_airport} {arr_time}\n"
+                "Бағасы: {price} {currency}"
+            ),
+            "ky": (
+                "Авиакомпания {airline} {flight_number}\n"
+                "Учуу: {dep_airport} {dep_time}\n"
+                "Конуу: {arr_airport} {arr_time}\n"
+                "Баасы: {price} {currency}"
+            ),
+            "en": (
+                "Airline {airline} {flight_number}\n"
+                "Departure: {dep_airport} {dep_time}\n"
+                "Arrival: {arr_airport} {arr_time}\n"
+                "Price: {price} {currency}"
+            ),
         }
         template = templates.get(language, templates["en"])
         return template.format(
@@ -96,10 +117,7 @@ class FlightAPIClient:
     def search_flights(
         self, origin: str, destination: str, date: datetime
     ) -> List[Flight]:
-        """Search for flights around the specified date.
-
-        The API is queried with a +/- 3 day window to provide nearby flights.
-        """
+        """Search for flights around the specified date."""
 
         date_from = (date - timedelta(days=3)).strftime("%d/%m/%Y")
         date_to = (date + timedelta(days=3)).strftime("%d/%m/%Y")
@@ -159,6 +177,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "API ключ не настроен. Обратитесь к администратору.",
         "error": "Произошла ошибка при поиске рейсов. Попробуйте позже.",
         "cancelled": "Поиск отменён. Напишите /start чтобы начать заново.",
+        "restart": "Напишите /start чтобы начать заново.",
     },
     "uz": {
         "label": "🇺🇿 O'zbekcha",
@@ -172,6 +191,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "API kaliti sozlanmagan. Administrator bilan bog'laning.",
         "error": "Parvozlarni qidirishda xatolik yuz berdi. Keyinroq urinib ko'ring.",
         "cancelled": "Qidiruv bekor qilindi. Qayta boshlash uchun /start yozing.",
+        "restart": "Qayta boshlash uchun /start yozing.",
     },
     "tg": {
         "label": "🇹🇯 Тоҷикӣ",
@@ -185,6 +205,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "Калиди API танзим нашудааст. Лутфан ба администратор муроҷиат кунед.",
         "error": "Ҳангоми ҷустуҷӯи парвозҳо хато шуд. Баъдтар кӯшиш кунед.",
         "cancelled": "Ҷустуҷӯ бекор карда шуд. Барои аз нав оғоз кардан /start нависед.",
+        "restart": "Барои аз нав оғоз кардан /start нависед.",
     },
     "kk": {
         "label": "🇰🇿 Қазақша",
@@ -198,6 +219,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "API кілті бапталмаған. Әкімшіге хабарласыңыз.",
         "error": "Рейстерді іздеу кезінде қате кетті. Кейінірек қайталап көріңіз.",
         "cancelled": "Іздеу тоқтатылды. Қайта бастау үшін /start жазыңыз.",
+        "restart": "Қайта бастау үшін /start жазыңыз.",
     },
     "ky": {
         "label": "🇰🇬 Кыргызча",
@@ -211,6 +233,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "API ачкычы орнотулган эмес. Администраторго кайрылыңыз.",
         "error": "Рейстерди издөөдө ката кетти. Кийинчерээк аракет кылыңыз.",
         "cancelled": "Издөө токтотулду. Кайра баштоо үчүн /start жазыңыз.",
+        "restart": "Кайра баштоо үчүн /start жазыңыз.",
     },
     "en": {
         "label": "🇬🇧 English",
@@ -224,6 +247,7 @@ LANGUAGE_PACK: Dict[str, Dict[str, str]] = {
         "api_key_missing": "API key is not configured. Please contact the administrator.",
         "error": "An error occurred while searching for flights. Please try again later.",
         "cancelled": "Search cancelled. Type /start to begin again.",
+        "restart": "Type /start to search again.",
     },
 }
 
@@ -241,57 +265,56 @@ def build_language_keyboard() -> InlineKeyboardMarkup:
     """Create an inline keyboard for language selection."""
 
     buttons = [
-        [InlineKeyboardButton(pack["label"], callback_data=code)]
+        [InlineKeyboardButton(text=pack["label"], callback_data=f"lang:{code}")]
         for code, pack in LANGUAGE_PACK.items()
     ]
-    return InlineKeyboardMarkup(buttons)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+router = Router()
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext) -> None:
     """Handle the /start command by asking the user to select a language."""
 
-    keyboard = build_language_keyboard()
-    if update.message:
-        await update.message.reply_text(
-            get_text("en", "choose_language"), reply_markup=keyboard
-        )
-    else:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            get_text("en", "choose_language"), reply_markup=keyboard
-        )
-    return CHOOSING_LANGUAGE
+    await state.clear()
+    await message.answer(
+        get_text("en", "choose_language"), reply_markup=build_language_keyboard()
+    )
 
 
-async def language_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Callback after the user picks a language."""
+@router.callback_query(F.data.startswith("lang:"))
+async def language_selected(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle language selection and prompt for origin."""
 
-    query = update.callback_query
-    await query.answer()
-
-    language = query.data
-    context.user_data["language"] = language
-
-    await query.edit_message_text(get_text(language, "ask_origin"))
-    return ORIGIN
+    await callback.answer()
+    language = callback.data.split(":", maxsplit=1)[1]
+    await state.set_state(FlightSearch.origin)
+    await state.update_data(language=language)
+    await callback.message.edit_text(get_text(language, "ask_origin"))
 
 
-async def handle_origin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store the origin provided by the user and ask for the destination."""
+@router.message(FlightSearch.origin)
+async def handle_origin(message: Message, state: FSMContext) -> None:
+    """Store origin and ask for destination."""
 
-    language = context.user_data.get("language", "en")
-    context.user_data["origin"] = update.message.text.strip()
-    await update.message.reply_text(get_text(language, "ask_destination"))
-    return DESTINATION
+    await state.update_data(origin=message.text.strip())
+    data = await state.get_data()
+    language = data.get("language", "en")
+    await state.set_state(FlightSearch.destination)
+    await message.answer(get_text(language, "ask_destination"))
 
 
-async def handle_destination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store the destination and ask for the travel date."""
+@router.message(FlightSearch.destination)
+async def handle_destination(message: Message, state: FSMContext) -> None:
+    """Store destination and ask for date."""
 
-    language = context.user_data.get("language", "en")
-    context.user_data["destination"] = update.message.text.strip()
-    await update.message.reply_text(get_text(language, "ask_date"))
-    return DATE
+    await state.update_data(destination=message.text.strip())
+    data = await state.get_data()
+    language = data.get("language", "en")
+    await state.set_state(FlightSearch.date)
+    await message.answer(get_text(language, "ask_date"))
 
 
 def parse_date(date_str: str) -> Optional[datetime]:
@@ -303,88 +326,78 @@ def parse_date(date_str: str) -> Optional[datetime]:
         return None
 
 
-async def handle_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Validate the date, query the API and display flight options."""
+@router.message(FlightSearch.date)
+async def handle_date(message: Message, state: FSMContext) -> None:
+    """Validate date, call the API, and show flight options."""
 
-    language = context.user_data.get("language", "en")
-    date_text = update.message.text.strip()
-    travel_date = parse_date(date_text)
+    data = await state.get_data()
+    language = data.get("language", "en")
+    travel_date = parse_date(message.text.strip())
 
     if travel_date is None:
-        await update.message.reply_text(get_text(language, "invalid_date"))
-        return DATE
+        await message.answer(get_text(language, "invalid_date"))
+        return
 
-    origin = context.user_data.get("origin")
-    destination = context.user_data.get("destination")
+    origin = data.get("origin", "")
+    destination = data.get("destination", "")
 
     api_key = os.getenv("TEQUILA_API_KEY")
     if not api_key:
-        await update.message.reply_text(get_text(language, "api_key_missing"))
-        return ConversationHandler.END
+        await message.answer(get_text(language, "api_key_missing"))
+        await state.clear()
+        return
 
-    await update.message.reply_text(get_text(language, "searching"))
+    await message.answer(get_text(language, "searching"))
+
+    client = FlightAPIClient(api_key)
 
     try:
-        client = FlightAPIClient(api_key)
-        flights = client.search_flights(origin, destination, travel_date)
+        flights = await asyncio.to_thread(
+            client.search_flights, origin, destination, travel_date
+        )
     except FlightAPIError:
         LOGGER.exception("Failed to retrieve flights")
-        await update.message.reply_text(get_text(language, "error"))
-        return ConversationHandler.END
+        await message.answer(get_text(language, "error"))
+        await state.clear()
+        return
 
     if not flights:
-        await update.message.reply_text(get_text(language, "no_flights"))
-        return ConversationHandler.END
+        await message.answer(get_text(language, "no_flights"))
+        await message.answer(get_text(language, "restart"))
+        await state.clear()
+        return
 
     for flight in flights:
-        await update.message.reply_text(flight.format_for_user(language))
+        await message.answer(flight.format_for_user(language))
 
-    await update.message.reply_text(get_text(language, "cancelled"))
-    return ConversationHandler.END
+    await message.answer(get_text(language, "restart"))
+    await state.clear()
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Allow the user to cancel the conversation."""
 
-    language = context.user_data.get("language", "en")
-    if update.message:
-        await update.message.reply_text(get_text(language, "cancelled"))
-    return ConversationHandler.END
+    data = await state.get_data()
+    language = data.get("language", "en")
+    await state.clear()
+    await message.answer(get_text(language, "cancelled"))
 
 
-def build_application() -> Application:
-    """Create the Telegram application with handlers."""
+async def main() -> None:
+    """Entrypoint for running the Telegram bot."""
 
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is required")
 
-    application = Application.builder().token(token).build()
+    bot = Bot(token=token)
+    dispatcher = Dispatcher()
+    dispatcher.include_router(router)
 
-    conversation = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHOOSING_LANGUAGE: [CallbackQueryHandler(language_selected)],
-            ORIGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_origin)],
-            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_destination)],
-            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_date)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        name="flight_search_conversation",
-        persistent=False,
-    )
-
-    application.add_handler(conversation)
-    return application
-
-
-def main() -> None:
-    """Entrypoint for running the Telegram bot."""
-
-    application = build_application()
     LOGGER.info("Starting Atlas Travel bot")
-    application.run_polling()
+    await dispatcher.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
