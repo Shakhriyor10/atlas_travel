@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -10,6 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiohttp import ClientSession, ClientTimeout
 
 
 # -------------------- Domain models --------------------
@@ -37,6 +39,21 @@ LANGUAGES = {
     "kk": "🇰🇿 Қазақша",
     "ky": "🇰🇬 Кыргызча",
     "en": "🇬🇧 English",
+}
+
+
+AIRLINE_NAMES: Dict[str, str] = {
+    "HY": "Uzbekistan Airways",
+    "SU": "Aeroflot",
+    "S7": "S7 Airlines",
+    "KC": "Air Astana",
+    "FV": "Rossiya Airlines",
+    "TK": "Turkish Airlines",
+    "PC": "Pegasus Airlines",
+    "FZ": "FlyDubai",
+    "U6": "Ural Airlines",
+    "YQ": "Tajik Air",
+    "SZ": "Somon Air",
 }
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
@@ -256,16 +273,123 @@ def generate_sample_flights() -> List[Flight]:
 FLIGHT_SCHEDULE = generate_sample_flights()
 
 
+TRAVELPAYOUTS_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN")
+TRAVELPAYOUTS_MARKER = os.getenv("TRAVELPAYOUTS_MARKER")
+TRAVELPAYOUTS_CURRENCY = os.getenv("TRAVELPAYOUTS_CURRENCY", "rub")
+TRAVELPAYOUTS_TIMEOUT = float(os.getenv("TRAVELPAYOUTS_TIMEOUT", "10"))
+
+
+def parse_iso_datetime(value: Optional[str]) -> datetime:
+    if not value:
+        raise ValueError("Datetime value is empty")
+    normalized = value.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+async def fetch_live_flights(
+    departure_airport: str,
+    arrival_airport: str,
+    date: Optional[datetime],
+    limit: int,
+) -> List[Flight]:
+    if not TRAVELPAYOUTS_TOKEN:
+        return []
+
+    url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+    params = {
+        "origin": departure_airport,
+        "destination": arrival_airport,
+        "limit": limit,
+        "currency": TRAVELPAYOUTS_CURRENCY,
+        "sorting": "price",
+        "unique": False,
+        "direct": True,
+    }
+
+    if TRAVELPAYOUTS_MARKER:
+        params["marker"] = TRAVELPAYOUTS_MARKER
+
+    if date is not None:
+        params["departure_at"] = date.strftime("%Y-%m-%d")
+
+    headers = {"X-Access-Token": TRAVELPAYOUTS_TOKEN}
+
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=TRAVELPAYOUTS_TIMEOUT)) as session:
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status != 200:
+                    return []
+                payload = await response.json()
+    except Exception:
+        return []
+
+    data = payload.get("data") or []
+    flights: List[Flight] = []
+
+    for item in data:
+        price = item.get("price")
+        departure_at = item.get("departure_at")
+
+        if price is None or departure_at is None:
+            continue
+
+        try:
+            departure_time = parse_iso_datetime(departure_at)
+        except ValueError:
+            continue
+
+        arrival_time: datetime
+        arrival_at = item.get("return_at")
+
+        if arrival_at:
+            try:
+                arrival_time = parse_iso_datetime(arrival_at)
+            except ValueError:
+                arrival_time = departure_time + timedelta(hours=3)
+        else:
+            duration_minutes = item.get("duration")
+            if isinstance(duration_minutes, (int, float)):
+                arrival_time = departure_time + timedelta(minutes=duration_minutes)
+            else:
+                arrival_time = departure_time + timedelta(hours=3)
+
+        airline_code = (item.get("airline") or "").upper()
+        airline_name = AIRLINE_NAMES.get(airline_code, airline_code or "Unknown carrier")
+        flight_number = item.get("flight_number")
+        flight_no = f"{airline_code}{flight_number}" if flight_number else (airline_code or "N/A")
+
+        flights.append(
+            Flight(
+                flight_no=flight_no,
+                airline=airline_name,
+                departure_airport=departure_airport,
+                arrival_airport=arrival_airport,
+                departure_time=departure_time,
+                arrival_time=arrival_time,
+                price=int(price),
+            )
+        )
+
+    return flights
+
+
 def find_airports(city_name: str) -> List[Dict[str, str]]:
     return AIRPORTS_BY_CITY.get(city_name.lower(), [])
 
 
-def find_flights(
+async def find_flights(
     departure_airport: str,
     arrival_airport: str,
     date: Optional[datetime] = None,
     limit: int = 5,
 ) -> List[Flight]:
+    live_flights = await fetch_live_flights(departure_airport, arrival_airport, date, limit)
+    if live_flights:
+        return live_flights[:limit]
+
     flights = [
         flight
         for flight in FLIGHT_SCHEDULE
@@ -490,7 +614,11 @@ async def present_flights(
         departure_airport = data.get("departure_airport")
         arrival_airport = data.get("arrival_airport")
 
-    flights = find_flights(departure_airport, arrival_airport, date=date)
+    if not departure_airport or not arrival_airport:
+        await message_source.answer(t(lang, "no_flights_found"))
+        return
+
+    flights = await find_flights(departure_airport, arrival_airport, date=date)
 
     if not flights:
         await message_source.answer(t(lang, "no_flights_found"))
