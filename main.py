@@ -56,6 +56,7 @@ SHOW_NEAREST_CALLBACK = "date:any"
 ACTION_SEARCH = "action:search"
 ACTION_CHANGE_LANGUAGE = "action:change_language"
 MAX_RESULTS = 200
+TELEGRAM_MESSAGE_LIMIT = 3500
 
 _AIRLINES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 _AIRLINES_LOCK = asyncio.Lock()
@@ -492,7 +493,8 @@ async def perform_search(
     else:
         await enrich_airline_names(language, flights)
         flights.sort(key=lambda item: str(item.get("departure_at", "")))
-        await bot.send_message(chat_id, format_flights(language, flights))
+        for chunk in format_flights(language, flights):
+            await bot.send_message(chat_id, chunk)
 
     await state.update_data(origin=None, destination=None)
     await state.set_state(FlightSearch.waiting_for_origin)
@@ -514,6 +516,10 @@ async def fetch_flights(
         "token": API_TOKEN,
         "currency": currency,
         "sorting": "price",
+        "unique": "false",
+        "trip_class": 0,
+        "page": 1,
+        "locale": get_locale(language),
     }
     if departure_date:
         params["departure_at"] = departure_date.strftime("%Y-%m-%d")
@@ -562,8 +568,11 @@ def format_datetime(value: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M") + tz_suffix
 
 
-def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
-    message_lines = [get_message(language, "results_header")]
+def format_flights(language: str, flights: List[Dict[str, Any]]) -> List[str]:
+    header = get_message(language, "results_header")
+    tail = get_message(language, "new_search")
+    segments: List[str] = []
+    current = header
     labels = {
         "departure": get_message(language, "departure"),
         "arrival": get_message(language, "arrival"),
@@ -590,11 +599,28 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
         flight_lines.append(f"  {labels['price']}: {price_value}")
         flight_lines.append(f"  {labels['aircraft']}: {aircraft}")
 
-        message_lines.append("\n".join(flight_lines))
+        block = "\n".join(flight_lines)
+        addition = ("\n\n" if current else "") + block
+        if len(current) + len(addition) > TELEGRAM_MESSAGE_LIMIT:
+            if current:
+                segments.append(current)
+            current = block
+        else:
+            current += addition
 
-    message_lines.append("")
-    message_lines.append(get_message(language, "new_search"))
-    return "\n\n".join(message_lines)
+    if tail:
+        addition = ("\n\n" if current else "") + tail
+        if len(current) + len(addition) <= TELEGRAM_MESSAGE_LIMIT:
+            current += addition
+        else:
+            if current:
+                segments.append(current)
+            current = tail
+
+    if current:
+        segments.append(current)
+
+    return segments
 
 
 bot = Bot(
