@@ -55,8 +55,8 @@ LANGUAGE_TO_LOCALE = {
 SHOW_NEAREST_CALLBACK = "date:any"
 ACTION_SEARCH = "action:search"
 ACTION_CHANGE_LANGUAGE = "action:change_language"
-MAX_RESULTS = 200
-MAX_PAGES = 5
+PAGE_SIZE = 200
+MAX_PAGES = 10
 TELEGRAM_MESSAGE_LIMIT = 3500
 
 _AIRLINES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
@@ -512,7 +512,7 @@ async def fetch_flights(
     params = {
         "origin": origin.upper(),
         "destination": destination.upper(),
-        "limit": MAX_RESULTS,
+        "limit": PAGE_SIZE,
         "one_way": "true",
         "token": API_TOKEN,
         "currency": currency,
@@ -530,13 +530,18 @@ async def fetch_flights(
 
     loop = asyncio.get_running_loop()
 
+    base_params = params.copy()
+
     def _do_request() -> Optional[List[Dict[str, Any]]]:
         collected: List[Dict[str, Any]] = []
-        for page in range(1, MAX_PAGES + 1):
-            params["page"] = page
-            query = parse.urlencode(params)
+        seen: set[Tuple[Any, ...]] = set()
+        page_number = 1
+        next_url: Optional[str] = f"{API_URL}?{parse.urlencode(base_params)}"
+        pages_fetched = 0
+        while next_url and pages_fetched < MAX_PAGES:
+            pages_fetched += 1
             req = request.Request(
-                f"{API_URL}?{query}",
+                next_url,
                 headers={"User-Agent": "atlas-travel-bot/1.0"},
             )
             try:
@@ -553,9 +558,42 @@ async def fetch_flights(
             data = body.get("data")
             if not isinstance(data, list):
                 break
-            collected.extend(data)
-            if len(data) < MAX_RESULTS:
+            for item in data:
+                key = (
+                    item.get("flight_number") or item.get("number"),
+                    item.get("departure_at"),
+                    item.get("airline"),
+                    item.get("return_at"),
+                    item.get("price"),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(item)
+
+            meta = body.get("meta")
+            next_link: Optional[str] = None
+            if isinstance(meta, dict):
+                links = meta.get("links")
+                if isinstance(links, dict):
+                    raw_next = links.get("next")
+                    if isinstance(raw_next, str) and raw_next:
+                        next_link = raw_next
+
+            if next_link:
+                parsed = parse.urlparse(next_link)
+                if not parsed.scheme:
+                    base = API_URL if API_URL.endswith("/") else API_URL + "/"
+                    next_url = parse.urljoin(base, next_link)
+                else:
+                    next_url = next_link
+            elif len(data) < PAGE_SIZE:
                 break
+            else:
+                page_number += 1
+                next_params = base_params.copy()
+                next_params["page"] = page_number
+                next_url = f"{API_URL}?{parse.urlencode(next_params)}"
         return collected
 
     return await loop.run_in_executor(None, _do_request)
