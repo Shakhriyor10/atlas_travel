@@ -521,9 +521,12 @@ async def fetch_flights(
         "trip_class": 0,
         "page": 1,
         "locale": get_locale(language),
+        "direct": "false",
     }
     if departure_date:
-        params["departure_at"] = departure_date.strftime("%Y-%m-%d")
+        date_str = departure_date.strftime("%Y-%m-%d")
+        params["departure_at"] = date_str
+        params["depart_date"] = f"{date_str}:{date_str}"
 
     loop = asyncio.get_running_loop()
 
