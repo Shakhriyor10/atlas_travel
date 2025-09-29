@@ -18,6 +18,7 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
 API_TOKEN = "a89e7cbe4ff3ee19f171cab072b53881"
 TELEGRAM_TOKEN = "8396669139:AAFvr8gWi7uXDMwPLBePF9NmYf16wsHmtPU"
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+AUTOCOMPLETE_URL = "https://autocomplete.travelpayouts.com/places2"
 
 LANGUAGE_OPTIONS = [
     ("ru", "🇷🇺 Русский"),
@@ -37,18 +38,32 @@ LANGUAGE_PROMPT = (
     "🇬🇧 Please choose your language"
 )
 
+LANGUAGE_TO_LOCALE = {
+    "ru": "ru",
+    "uz": "ru",
+    "tg": "ru",
+    "kk": "ru",
+    "ky": "ru",
+    "en": "en",
+}
+
+SHOW_NEAREST_CALLBACK = "date:any"
+
 MESSAGES: Dict[str, Dict[str, str]] = {
     "ru": {
         "choose_language": "Выберите язык обслуживания:",
-        "ask_origin": "✈️ Введите IATA-код города отправления (например, TAS).",
-        "ask_destination": "📍 Теперь укажите пункт назначения (IATA-код, например, DXB).",
-        "ask_date": "📅 Введите дату вылета в формате ГГГГ-ММ-ДД или отправьте '-' чтобы показать ближайшие рейсы.",
-        "invalid_date": "Неверный формат даты. Пожалуйста, используйте ГГГГ-ММ-ДД или '-' для пропуска.",
+        "ask_origin": "✈️ Введите город отправления или его IATA-код (например, Москва или MOW).",
+        "ask_destination": "📍 Теперь укажите город назначения или IATA-код (например, Дубай или DXB).",
+        "ask_date": "📅 Введите дату вылета в формате ГГГГ-ММ-ДД или воспользуйтесь кнопкой ниже, чтобы показать ближайшие рейсы.",
+        "invalid_date": "Неверный формат даты. Пожалуйста, используйте ГГГГ-ММ-ДД.",
+        "invalid_city": "Не удалось распознать город. Попробуйте указать название или IATA-код.",
         "searching": "🔎 Ищу подходящие рейсы...",
         "error_fetch": "Не удалось получить данные о рейсах. Попробуйте позже.",
         "no_flights": "Ближайших рейсов не найдено.",
         "results_header": "Вот что удалось найти:",
         "new_search": "Введите новый город отправления, чтобы искать снова, или используйте /start для смены языка.",
+        "missing_data": "Данные поиска устарели. Нажмите /start, чтобы начать заново.",
+        "nearest_button": "Показать ближайшие рейсы",
         "departure": "Вылет",
         "arrival": "Прилет",
         "airline": "Авиакомпания",
@@ -57,15 +72,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
     },
     "uz": {
         "choose_language": "Tilni tanlang:",
-        "ask_origin": "✈️ Uchish shahri IATA kodini kiriting (masalan, TAS).",
-        "ask_destination": "📍 Endi boradigan manzilning IATA kodini yozing (masalan, DXB).",
-        "ask_date": "📅 Parvoz sanasini YYYY-MM-DD formatida kiriting yoki '-' yuboring va yaqin reyslarni ko'rsatamiz.",
-        "invalid_date": "Sana formati noto'g'ri. Iltimos, YYYY-MM-DD formatidan foydalaning yoki '-' yuboring.",
+        "ask_origin": "✈️ Uchish shahrining nomini yoki IATA kodini kiriting (masalan, Toshkent yoki TAS).",
+        "ask_destination": "📍 Endi boradigan manzilning nomini yoki IATA kodini yozing (masalan, Dubay yoki DXB).",
+        "ask_date": "📅 Parvoz sanasini YYYY-MM-DD formatida kiriting yoki quyidagi tugmadan eng yaqin reyslarni tanlang.",
+        "invalid_date": "Sana formati noto'g'ri. Iltimos, YYYY-MM-DD formatidan foydalaning.",
+        "invalid_city": "Shaharni aniqlab bo'lmadi. Nomini yoki IATA kodini qaytadan kiriting.",
         "searching": "🔎 Parvozlar qidirilmoqda...",
         "error_fetch": "Parvoz ma'lumotlarini olish muvaffaqийatsiz tugadi. Birozdan so'ng qayта urinib ko'ring.",
         "no_flights": "Yaqqin reyslar topilmadi.",
         "results_header": "Topilgan variantlar:",
         "new_search": "Qayta qidirish uchun yangi uchish shahrini kiriting yoki tilni almashtirish uchun /start yuboring.",
+        "missing_data": "Qidiruv ma'lumotlari eskirdi. /start yuborib yangidan boshlang.",
+        "nearest_button": "Eng yaqin reyslar",
         "departure": "Uchish",
         "arrival": "Qo'nish",
         "airline": "Aviakompaniya",
@@ -74,15 +92,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
     },
     "tg": {
         "choose_language": "Забони хизматрасониро интихоб кунед:",
-        "ask_origin": "✈️ Рамзи IATA фурудгоҳи парвозро ворид кунед (масалан, DYU).",
-        "ask_destination": "📍 Акнун рамзи IATA самтро нависед (масалан, DXB).",
-        "ask_date": "📅 Санаи парвозро ба шакли YYYY-MM-DD ворид кунед ё '-' фиристед, то парвозҳои наздик нишон дода шаванд.",
-        "invalid_date": "Сана нодуруст аст. Формати YYYY-MM-DD-ро истифода баред ё '-' фиристед.",
+        "ask_origin": "✈️ Номи шаҳр ё рамзи IATA-и парвозро ворид кунед (масалан, Душанбе ё DYU).",
+        "ask_destination": "📍 Акнун номи самт ё рамзи IATA-ро нависед (масалан, Дубай ё DXB).",
+        "ask_date": "📅 Санаи парвозро ба шакли YYYY-MM-DD ворид кунед ё аз тугмаи поён барои парвозҳои наздик истифода баред.",
+        "invalid_date": "Сана нодуруст аст. Формати YYYY-MM-DD-ро истифода баред.",
+        "invalid_city": "Шаҳр шинохта нашуд. Лутфан ном ё рамзи IATA-ро ворид кунед.",
         "searching": "🔎 Парвозҳо ҷустуҷӯ мешаванд...",
         "error_fetch": "Маълумот дар бораи парвозҳо дастнорас аст. Лутфан дертар кӯшиш кунед.",
         "no_flights": "Парвозҳои наздик ёфт нашуданд.",
         "results_header": "Ин натиҷаҳо дастрасанд:",
         "new_search": "Барои ҷустуҷӯи дубора шаҳрро аз нав ворид кунед ё барои иваз кардани забон /start-ро истифода баред.",
+        "missing_data": "Маълумоти ҷустуҷӯ куҳна шуд. Барои оғоз аз нав /start-ро фиристед.",
+        "nearest_button": "Парвозҳои наздик",
         "departure": "Парвоз",
         "arrival": "Фуруд",
         "airline": "Ширкати ҳавопаймоӣ",
@@ -91,15 +112,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
     },
     "kk": {
         "choose_language": "Қай тілде жалғасамыз?",
-        "ask_origin": "✈️ Ұшатын қаланың IATA кодын енгізіңіз (мысалы, ALA).",
-        "ask_destination": "📍 Енді баратын бағыттың IATA кодын жазыңыз (мысалы, DXB).",
-        "ask_date": "📅 Ұшу күнін YYYY-MM-DD форматында жазыңыз немесе жақын рейстер үшін '-' жіберіңіз.",
-        "invalid_date": "Күн форматы дұрыс емес. YYYY-MM-DD форматын пайдаланыңыз немесе '-' жіберіңіз.",
+        "ask_origin": "✈️ Ұшатын қаланың атауын немесе IATA кодын енгізіңіз (мысалы, Алматы немесе ALA).",
+        "ask_destination": "📍 Енді баратын бағыттың атауын немесе IATA кодын жазыңыз (мысалы, Дубай немесе DXB).",
+        "ask_date": "📅 Ұшу күнін YYYY-MM-DD форматында енгізіңіз немесе төмендегі түймені пайдаланып жақын рейстерді көріңіз.",
+        "invalid_date": "Күн форматы дұрыс емес. YYYY-MM-DD форматты пайдаланыңыз.",
+        "invalid_city": "Қаланы анықтау мүмкін болмады. Атауын немесе IATA кодын көрсетіңіз.",
         "searching": "🔎 Рейстер ізделуде...",
         "error_fetch": "Рейстер туралы ақпарат алу мүмкін болмады. Кейінірек қайта көріңіз.",
         "no_flights": "Жақын рейстер табылмады.",
         "results_header": "Табылған ұсыныстар:",
         "new_search": "Жаңа іздеу үшін ұшу қаласын қайта енгізіңіз немесе тілді ауыстыру үшін /start командасын пайдаланыңыз.",
+        "missing_data": "Іздеу деректері ескірді. Қайта бастау үшін /start жіберіңіз.",
+        "nearest_button": "Жақын рейстер",
         "departure": "Ұшу",
         "arrival": "Қону",
         "airline": "Әуе компаниясы",
@@ -108,15 +132,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
     },
     "ky": {
         "choose_language": "Тилди тандаңыз:",
-        "ask_origin": "✈️ Учуп чыгуучу шаардын IATA кодун жазыңыз (мисалы, FRU).",
-        "ask_destination": "📍 Эми бара турган жердин IATA кодун киргизиңиз (мисалы, DXB).",
-        "ask_date": "📅 Учуу күнүн YYYY-MM-DD форматында жазыңыз же жакынкы рейстер үчүн '-' жөнөтүңүз.",
-        "invalid_date": "Дата туура эмес. YYYY-MM-DD форматында жазыңыз же '-' жөнөтүңүз.",
+        "ask_origin": "✈️ Учуп чыгуучу шаардын атын же IATA кодун жазыңыз (мисалы, Бишкек же FRU).",
+        "ask_destination": "📍 Эми бара турган шаардын атын же IATA кодун киргизиңиз (мисалы, Дубай же DXB).",
+        "ask_date": "📅 Учуу күнүн YYYY-MM-DD форматында жазыңыз же төмөнкү баскыч аркылуу жакынкы рейстерди көрүңүз.",
+        "invalid_date": "Дата туура эмес. YYYY-MM-DD форматында жазыңыз.",
+        "invalid_city": "Шаар табылган жок. Атын же IATA кодун жазыңыз.",
         "searching": "🔎 Рейстер издөөдө...",
         "error_fetch": "Рейстер боюнча маалымат алуу мүмкүн эмес. Кийин кайра аракет кылыңыз.",
         "no_flights": "Жакынкы рейстер табылган жок.",
         "results_header": "Табылган варианттар:",
         "new_search": "Жаңы издөө үчүн учуп чыгуучу шаардын кодун кайра жазыңыз же тилди алмаштыруу үчүн /start колдонуңуз.",
+        "missing_data": "Издөө маалыматы эскирди. /start жөнөтүп кайра баштаңыз.",
+        "nearest_button": "Жакынкы рейстер",
         "departure": "Учуу",
         "arrival": "Кону",
         "airline": "Авиакампания",
@@ -125,15 +152,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
     },
     "en": {
         "choose_language": "Please choose your language:",
-        "ask_origin": "✈️ Enter the departure city's IATA code (e.g. LON).",
-        "ask_destination": "📍 Now provide the destination IATA code (e.g. DXB).",
-        "ask_date": "📅 Type the departure date in YYYY-MM-DD format or send '-' to see the nearest flights.",
-        "invalid_date": "The date format is invalid. Use YYYY-MM-DD or '-' to skip.",
+        "ask_origin": "✈️ Enter the departure city's name or IATA code (e.g. London or LON).",
+        "ask_destination": "📍 Now provide the destination city's name or IATA code (e.g. Dubai or DXB).",
+        "ask_date": "📅 Type the departure date in YYYY-MM-DD format or use the button below to see the nearest flights.",
+        "invalid_date": "The date format is invalid. Use YYYY-MM-DD.",
+        "invalid_city": "Could not recognise the city. Please enter the name or the IATA code.",
         "searching": "🔎 Looking for available flights...",
         "error_fetch": "Could not retrieve flight data. Please try again later.",
         "no_flights": "No nearby flights were found.",
         "results_header": "Here are the available options:",
         "new_search": "Enter a new departure city to search again or use /start to change the language.",
+        "missing_data": "Search data is outdated. Send /start to begin again.",
+        "nearest_button": "Show nearest flights",
         "departure": "Departure",
         "arrival": "Arrival",
         "airline": "Airline",
@@ -141,18 +171,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "price": "Price",
     },
 }
-
-DATE_SKIP_ALIASES = {
-    "-",
-    "skip",
-    "пропустить",
-    "ближайшие",
-    "отмена",
-    "yaqin",
-    "yo'q",
-    "cancel",
-}
-
 
 class FlightSearch(StatesGroup):
     waiting_for_origin = State()
@@ -178,6 +196,101 @@ def build_language_keyboard() -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_nearest_keyboard(language: str) -> InlineKeyboardMarkup:
+    button = InlineKeyboardButton(
+        text=get_message(language, "nearest_button"),
+        callback_data=SHOW_NEAREST_CALLBACK,
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+
+def get_locale(language: str) -> str:
+    return LANGUAGE_TO_LOCALE.get(language, "en")
+
+
+async def fetch_iata_code(query: str, language: str) -> Optional[str]:
+    params = {
+        "term": query,
+        "locale": get_locale(language),
+    }
+    url = f"{AUTOCOMPLETE_URL}?{parse.urlencode(params)}"
+    req = request.Request(url, headers={"User-Agent": "atlas-travel-bot/1.0"})
+
+    loop = asyncio.get_running_loop()
+
+    def _do_request() -> Optional[str]:
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                payload = response.read().decode("utf-8")
+        except error.URLError as exc:  # pragma: no cover - network errors are handled gracefully
+            logging.error("Failed to fetch location suggestions: %s", exc)
+            return None
+
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            logging.error("Failed to decode location suggestions: %s", exc)
+            return None
+
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                code = item.get("code")
+                place_type = item.get("type")
+                if isinstance(code, str):
+                    normalized = code.strip().upper()
+                    if len(normalized) == 3 and normalized.isalpha() and place_type in {"city", "airport"}:
+                        return normalized
+                city_code = item.get("city_code")
+                if isinstance(city_code, str):
+                    normalized_city = city_code.strip().upper()
+                    if len(normalized_city) == 3 and normalized_city.isalpha():
+                        return normalized_city
+        return None
+
+    return await loop.run_in_executor(None, _do_request)
+
+
+async def resolve_location(value: str, language: str) -> Optional[str]:
+    query = value.strip()
+    if not query:
+        return None
+    candidate = query.upper()
+    if len(candidate) == 3 and candidate.isalpha():
+        return candidate
+    return await fetch_iata_code(query, language)
+
+
+async def perform_search(
+    chat_id: int,
+    language: str,
+    origin: Optional[str],
+    destination: Optional[str],
+    departure_date: Optional[datetime],
+    state: FSMContext,
+) -> None:
+    if not origin or not destination:
+        await bot.send_message(chat_id, get_message(language, "missing_data"))
+        await state.update_data(origin=None, destination=None)
+        await state.set_state(FlightSearch.waiting_for_origin)
+        await bot.send_message(chat_id, get_message(language, "ask_origin"))
+        return
+
+    await bot.send_message(chat_id, get_message(language, "searching"))
+    flights = await fetch_flights(origin, destination, departure_date)
+    if flights is None:
+        await bot.send_message(chat_id, get_message(language, "error_fetch"))
+    elif not flights:
+        await bot.send_message(chat_id, get_message(language, "no_flights"))
+    else:
+        await bot.send_message(chat_id, format_flights(language, flights))
+
+    await state.update_data(origin=None, destination=None)
+    await state.set_state(FlightSearch.waiting_for_origin)
+    await bot.send_message(chat_id, get_message(language, "ask_origin"))
 
 
 async def fetch_flights(origin: str, destination: str, departure_date: Optional[datetime]) -> Optional[List[Dict[str, Any]]]:
@@ -292,8 +405,11 @@ async def language_chosen(callback: CallbackQuery, state: FSMContext) -> None:
 async def process_origin(message: Message, state: FSMContext) -> None:
     user_data = await state.get_data()
     language = user_data.get("language", "en")
-    origin = message.text.strip().upper()
+    raw_origin = message.text or ""
+    origin = await resolve_location(raw_origin, language)
     if not origin:
+        if raw_origin.strip():
+            await message.answer(get_message(language, "invalid_city"))
         await message.answer(get_message(language, "ask_origin"))
         return
     await state.update_data(origin=origin)
@@ -305,12 +421,18 @@ async def process_origin(message: Message, state: FSMContext) -> None:
 async def process_destination(message: Message, state: FSMContext) -> None:
     user_data = await state.get_data()
     language = user_data.get("language", "en")
-    destination = message.text.strip().upper()
+    raw_destination = message.text or ""
+    destination = await resolve_location(raw_destination, language)
     if not destination:
+        if raw_destination.strip():
+            await message.answer(get_message(language, "invalid_city"))
         await message.answer(get_message(language, "ask_destination"))
         return
     await state.update_data(destination=destination)
-    await message.answer(get_message(language, "ask_date"))
+    await message.answer(
+        get_message(language, "ask_date"),
+        reply_markup=build_nearest_keyboard(language),
+    )
     await state.set_state(FlightSearch.waiting_for_date)
 
 
@@ -321,27 +443,35 @@ async def process_date(message: Message, state: FSMContext) -> None:
     raw_date = message.text.strip()
 
     departure_date: Optional[datetime] = None
-    if raw_date and raw_date.lower() not in DATE_SKIP_ALIASES:
+    if raw_date:
         try:
             departure_date = datetime.strptime(raw_date, "%Y-%m-%d")
         except ValueError:
-            await message.answer(get_message(language, "invalid_date"))
+            await message.answer(
+                get_message(language, "invalid_date"),
+                reply_markup=build_nearest_keyboard(language),
+            )
             return
 
-    await message.answer(get_message(language, "searching"))
     origin = user_data.get("origin", "")
     destination = user_data.get("destination", "")
+    await perform_search(message.chat.id, language, origin, destination, departure_date, state)
 
-    flights = await fetch_flights(origin, destination, departure_date)
-    if flights is None:
-        await message.answer(get_message(language, "error_fetch"))
-    elif not flights:
-        await message.answer(get_message(language, "no_flights"))
-    else:
-        await message.answer(format_flights(language, flights))
 
-    await state.set_state(FlightSearch.waiting_for_origin)
-    await message.answer(get_message(language, "ask_origin"))
+@dp.callback_query(F.data == SHOW_NEAREST_CALLBACK)
+async def show_nearest(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    user_data = await state.get_data()
+    language = user_data.get("language", "en")
+    origin = user_data.get("origin")
+    destination = user_data.get("destination")
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:  # pragma: no cover - message may be missing or already updated
+        pass
+
+    await perform_search(callback.message.chat.id, language, origin, destination, None, state)
 
 
 async def main() -> None:
