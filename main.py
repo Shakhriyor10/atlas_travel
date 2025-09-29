@@ -56,6 +56,7 @@ SHOW_NEAREST_CALLBACK = "date:any"
 ACTION_SEARCH = "action:search"
 ACTION_CHANGE_LANGUAGE = "action:change_language"
 MAX_RESULTS = 200
+MAX_PAGES = 5
 TELEGRAM_MESSAGE_LIMIT = 3500
 
 _AIRLINES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
@@ -524,30 +525,35 @@ async def fetch_flights(
     if departure_date:
         params["departure_at"] = departure_date.strftime("%Y-%m-%d")
 
-    query = parse.urlencode(params)
-    req = request.Request(
-        f"{API_URL}?{query}",
-        headers={"User-Agent": "atlas-travel-bot/1.0"},
-    )
-
     loop = asyncio.get_running_loop()
 
     def _do_request() -> Optional[List[Dict[str, Any]]]:
-        try:
-            with request.urlopen(req, timeout=15) as response:
-                payload = response.read().decode("utf-8")
-        except error.URLError as exc:  # pragma: no cover - network errors are handled gracefully
-            logging.error("Failed to fetch flights: %s", exc)
-            return None
-        try:
-            body = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            logging.error("Failed to decode response: %s", exc)
-            return None
-        data = body.get("data")
-        if isinstance(data, list):
-            return data
-        return None
+        collected: List[Dict[str, Any]] = []
+        for page in range(1, MAX_PAGES + 1):
+            params["page"] = page
+            query = parse.urlencode(params)
+            req = request.Request(
+                f"{API_URL}?{query}",
+                headers={"User-Agent": "atlas-travel-bot/1.0"},
+            )
+            try:
+                with request.urlopen(req, timeout=15) as response:
+                    payload = response.read().decode("utf-8")
+            except error.URLError as exc:  # pragma: no cover - network errors are handled gracefully
+                logging.error("Failed to fetch flights: %s", exc)
+                return collected or None
+            try:
+                body = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                logging.error("Failed to decode response: %s", exc)
+                return collected or None
+            data = body.get("data")
+            if not isinstance(data, list):
+                break
+            collected.extend(data)
+            if len(data) < MAX_RESULTS:
+                break
+        return collected
 
     return await loop.run_in_executor(None, _do_request)
 
