@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
 
 from aiogram import Bot, Dispatcher, F
@@ -19,6 +19,7 @@ API_TOKEN = "a89e7cbe4ff3ee19f171cab072b53881"
 TELEGRAM_TOKEN = "8396669139:AAFvr8gWi7uXDMwPLBePF9NmYf16wsHmtPU"
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
 AUTOCOMPLETE_URL = "https://autocomplete.travelpayouts.com/places2"
+AIRLINES_URL = "https://api.travelpayouts.com/data/airlines.json"
 
 LANGUAGE_OPTIONS = [
     ("ru", "🇷🇺 Русский"),
@@ -48,6 +49,19 @@ LANGUAGE_TO_LOCALE = {
 }
 
 SHOW_NEAREST_CALLBACK = "date:any"
+MAX_RESULTS = 10
+
+_AIRLINES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_AIRLINES_LOCK = asyncio.Lock()
+
+AIRLINE_LANGUAGE_PREFERENCES: Dict[str, Tuple[str, ...]] = {
+    "en": ("en", "ru"),
+    "ru": ("ru", "en"),
+    "uz": ("ru", "en"),
+    "tg": ("ru", "en"),
+    "kk": ("ru", "en"),
+    "ky": ("ru", "en"),
+}
 
 MESSAGES: Dict[str, Dict[str, str]] = {
     "ru": {
@@ -264,6 +278,89 @@ async def resolve_location(value: str, language: str) -> Optional[str]:
     return await fetch_iata_code(query, language)
 
 
+async def load_airlines() -> Dict[str, Dict[str, Any]]:
+    global _AIRLINES_CACHE
+    if _AIRLINES_CACHE is not None:
+        return _AIRLINES_CACHE
+
+    async with _AIRLINES_LOCK:
+        if _AIRLINES_CACHE is not None:
+            return _AIRLINES_CACHE
+
+        loop = asyncio.get_running_loop()
+
+        def _do_request() -> Dict[str, Dict[str, Any]]:
+            try:
+                req = request.Request(
+                    AIRLINES_URL,
+                    headers={"User-Agent": "atlas-travel-bot/1.0"},
+                )
+                with request.urlopen(req, timeout=15) as response:
+                    payload = response.read().decode("utf-8")
+            except error.URLError as exc:  # pragma: no cover - best effort lookup
+                logging.error("Failed to fetch airlines directory: %s", exc)
+                return {}
+
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                logging.error("Failed to parse airlines directory: %s", exc)
+                return {}
+
+            airlines: Dict[str, Dict[str, Any]] = {}
+            if isinstance(data, list):
+                for entry in data:
+                    if not isinstance(entry, dict):
+                        continue
+                    code_value = entry.get("iata") or entry.get("code")
+                    if not isinstance(code_value, str):
+                        continue
+                    code = code_value.strip().upper()
+                    if len(code) != 2 or not code.isalpha():
+                        continue
+                    translations = entry.get("name_translations")
+                    airlines[code] = {
+                        "name": entry.get("name"),
+                        "name_translations": translations if isinstance(translations, dict) else {},
+                    }
+            return airlines
+
+        _AIRLINES_CACHE = await loop.run_in_executor(None, _do_request)
+        return _AIRLINES_CACHE
+
+
+def choose_airline_name(language: str, airline_info: Optional[Dict[str, Any]], code: str) -> str:
+    if not airline_info:
+        return code
+
+    preference = AIRLINE_LANGUAGE_PREFERENCES.get(language, ("en", "ru"))
+    translations = airline_info.get("name_translations")
+    if isinstance(translations, dict):
+        for locale in preference:
+            translated = translations.get(locale)
+            if isinstance(translated, str) and translated.strip():
+                return translated.strip()
+
+    name = airline_info.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+
+    return code
+
+
+async def enrich_airline_names(language: str, flights: List[Dict[str, Any]]) -> None:
+    directory = await load_airlines()
+    for flight in flights:
+        code = flight.get("airline")
+        if not isinstance(code, str):
+            continue
+        airline_code = code.strip().upper()
+        if not airline_code:
+            continue
+        airline_info = directory.get(airline_code)
+        flight["airline_name"] = choose_airline_name(language, airline_info, airline_code)
+
+
 async def perform_search(
     chat_id: int,
     language: str,
@@ -286,6 +383,7 @@ async def perform_search(
     elif not flights:
         await bot.send_message(chat_id, get_message(language, "no_flights"))
     else:
+        await enrich_airline_names(language, flights)
         await bot.send_message(chat_id, format_flights(language, flights))
 
     await state.update_data(origin=None, destination=None)
@@ -297,7 +395,7 @@ async def fetch_flights(origin: str, destination: str, departure_date: Optional[
     params = {
         "origin": origin.upper(),
         "destination": destination.upper(),
-        "limit": 5,
+        "limit": MAX_RESULTS,
         "one_way": "true",
         "token": API_TOKEN,
         "sorting": "price",
@@ -353,7 +451,7 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
     for flight in flights:
         departure = format_datetime(str(flight.get("departure_at", "-")))
         arrival = format_datetime(str(flight.get("return_at", "-"))) if flight.get("return_at") else None
-        airline = flight.get("airline", "-")
+        airline = flight.get("airline_name") or flight.get("airline") or "-"
         flight_number = flight.get("flight_number") or flight.get("number") or "-"
         price = flight.get("price")
         currency = flight.get("currency", "USD")
@@ -366,8 +464,6 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
         flight_lines.append(f"  {labels['flight_number']}: {flight_number}")
         flight_lines.append(f"  {labels['price']}: {price_value}")
 
-        if flight.get("link"):
-            flight_lines.append(f"  🔗 {flight['link']}")
         message_lines.append("\n".join(flight_lines))
 
     message_lines.append("")
