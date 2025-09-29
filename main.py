@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
 
@@ -20,6 +22,8 @@ TELEGRAM_TOKEN = "8396669139:AAFvr8gWi7uXDMwPLBePF9NmYf16wsHmtPU"
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
 AUTOCOMPLETE_URL = "https://autocomplete.travelpayouts.com/places2"
 AIRLINES_URL = "https://api.travelpayouts.com/data/airlines.json"
+
+DATABASE_PATH = Path("bot_data.db")
 
 LANGUAGE_OPTIONS = [
     ("ru", "🇷🇺 Русский"),
@@ -49,7 +53,9 @@ LANGUAGE_TO_LOCALE = {
 }
 
 SHOW_NEAREST_CALLBACK = "date:any"
-MAX_RESULTS = 10
+ACTION_SEARCH = "action:search"
+ACTION_CHANGE_LANGUAGE = "action:change_language"
+MAX_RESULTS = 200
 
 _AIRLINES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 _AIRLINES_LOCK = asyncio.Lock()
@@ -66,6 +72,9 @@ AIRLINE_LANGUAGE_PREFERENCES: Dict[str, Tuple[str, ...]] = {
 MESSAGES: Dict[str, Dict[str, str]] = {
     "ru": {
         "choose_language": "Выберите язык обслуживания:",
+        "choose_action": "Что вы хотите сделать?",
+        "search_flights": "Поиск авиабилетов",
+        "change_language": "Изменить язык",
         "ask_origin": "✈️ Введите город отправления или его IATA-код (например, Москва или MOW).",
         "ask_destination": "📍 Теперь укажите город назначения или IATA-код (например, Дубай или DXB).",
         "ask_date": "📅 Введите дату вылета в формате ГГГГ-ММ-ДД или воспользуйтесь кнопкой ниже, чтобы показать ближайшие рейсы.",
@@ -83,9 +92,13 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Авиакомпания",
         "flight_number": "Рейс",
         "price": "Цена",
+        "aircraft": "Самолет",
     },
     "uz": {
         "choose_language": "Tilni tanlang:",
+        "choose_action": "Qaysi amalni bajaramiz?",
+        "search_flights": "Aviabilet qidirish",
+        "change_language": "Tilni o'zgartirish",
         "ask_origin": "✈️ Uchish shahrining nomini yoki IATA kodini kiriting (masalan, Toshkent yoki TAS).",
         "ask_destination": "📍 Endi boradigan manzilning nomini yoki IATA kodini yozing (masalan, Dubay yoki DXB).",
         "ask_date": "📅 Parvoz sanasini YYYY-MM-DD formatida kiriting yoki quyidagi tugmadan eng yaqin reyslarni tanlang.",
@@ -103,9 +116,13 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Aviakompaniya",
         "flight_number": "Reys",
         "price": "Narxi",
+        "aircraft": "Samolyot",
     },
     "tg": {
         "choose_language": "Забони хизматрасониро интихоб кунед:",
+        "choose_action": "Амали лозимиро интихоб кунед:",
+        "search_flights": "Ҷустуҷӯи парвозҳо",
+        "change_language": "Тағйири забон",
         "ask_origin": "✈️ Номи шаҳр ё рамзи IATA-и парвозро ворид кунед (масалан, Душанбе ё DYU).",
         "ask_destination": "📍 Акнун номи самт ё рамзи IATA-ро нависед (масалан, Дубай ё DXB).",
         "ask_date": "📅 Санаи парвозро ба шакли YYYY-MM-DD ворид кунед ё аз тугмаи поён барои парвозҳои наздик истифода баред.",
@@ -123,9 +140,13 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Ширкати ҳавопаймоӣ",
         "flight_number": "Шумораи парвоз",
         "price": "Нарх",
+        "aircraft": "Ҳавопаймо",
     },
     "kk": {
         "choose_language": "Қай тілде жалғасамыз?",
+        "choose_action": "Әрі қарай не істейміз?",
+        "search_flights": "Әуе билеттерін іздеу",
+        "change_language": "Тілді өзгерту",
         "ask_origin": "✈️ Ұшатын қаланың атауын немесе IATA кодын енгізіңіз (мысалы, Алматы немесе ALA).",
         "ask_destination": "📍 Енді баратын бағыттың атауын немесе IATA кодын жазыңыз (мысалы, Дубай немесе DXB).",
         "ask_date": "📅 Ұшу күнін YYYY-MM-DD форматында енгізіңіз немесе төмендегі түймені пайдаланып жақын рейстерді көріңіз.",
@@ -143,9 +164,13 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Әуе компаниясы",
         "flight_number": "Рейс",
         "price": "Бағасы",
+        "aircraft": "Ұшақ",
     },
     "ky": {
         "choose_language": "Тилди тандаңыз:",
+        "choose_action": "Кайсы иш-аракетти тандайбыз?",
+        "search_flights": "Авиа билет издөө",
+        "change_language": "Тилди алмаштыруу",
         "ask_origin": "✈️ Учуп чыгуучу шаардын атын же IATA кодун жазыңыз (мисалы, Бишкек же FRU).",
         "ask_destination": "📍 Эми бара турган шаардын атын же IATA кодун киргизиңиз (мисалы, Дубай же DXB).",
         "ask_date": "📅 Учуу күнүн YYYY-MM-DD форматында жазыңыз же төмөнкү баскыч аркылуу жакынкы рейстерди көрүңүз.",
@@ -163,9 +188,13 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Авиакампания",
         "flight_number": "Рейс",
         "price": "Баасы",
+        "aircraft": "Учак",
     },
     "en": {
         "choose_language": "Please choose your language:",
+        "choose_action": "What would you like to do?",
+        "search_flights": "Search flights",
+        "change_language": "Change language",
         "ask_origin": "✈️ Enter the departure city's name or IATA code (e.g. London or LON).",
         "ask_destination": "📍 Now provide the destination city's name or IATA code (e.g. Dubai or DXB).",
         "ask_date": "📅 Type the departure date in YYYY-MM-DD format or use the button below to see the nearest flights.",
@@ -183,10 +212,12 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "airline": "Airline",
         "flight_number": "Flight",
         "price": "Price",
+        "aircraft": "Aircraft",
     },
 }
 
 class FlightSearch(StatesGroup):
+    waiting_for_action = State()
     waiting_for_origin = State()
     waiting_for_destination = State()
     waiting_for_date = State()
@@ -220,8 +251,84 @@ def build_nearest_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
+def build_main_menu(language: str) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=get_message(language, "search_flights"), callback_data=ACTION_SEARCH)],
+        [InlineKeyboardButton(text=get_message(language, "change_language"), callback_data=ACTION_CHANGE_LANGUAGE)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_locale(language: str) -> str:
     return LANGUAGE_TO_LOCALE.get(language, "en")
+
+
+LANGUAGE_TO_CURRENCY: Dict[str, str] = {
+    "ru": "RUB",
+    "uz": "UZS",
+    "tg": "TJS",
+    "kk": "KZT",
+    "ky": "KGS",
+    "en": "USD",
+}
+
+
+def get_currency(language: str) -> str:
+    return LANGUAGE_TO_CURRENCY.get(language, "USD")
+
+
+def init_db() -> None:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                language TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+
+async def set_user_language(user_id: int, language: str) -> None:
+    loop = asyncio.get_running_loop()
+
+    def _set() -> None:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            conn.execute(
+                "INSERT INTO user_settings(user_id, language) VALUES(?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET language=excluded.language",
+                (user_id, language),
+            )
+            conn.commit()
+
+    await loop.run_in_executor(None, _set)
+
+
+async def get_user_language(user_id: int) -> Optional[str]:
+    loop = asyncio.get_running_loop()
+
+    def _get() -> Optional[str]:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.execute(
+                "SELECT language FROM user_settings WHERE user_id = ?", (user_id,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    return await loop.run_in_executor(None, _get)
+
+
+async def ensure_language(state: FSMContext, user_id: int) -> str:
+    data = await state.get_data()
+    language = data.get("language")
+    if isinstance(language, str) and language in MESSAGES:
+        return language
+    saved = await get_user_language(user_id)
+    if isinstance(saved, str) and saved in MESSAGES:
+        await state.update_data(language=saved)
+        return saved
+    return "en"
 
 
 async def fetch_iata_code(query: str, language: str) -> Optional[str]:
@@ -377,13 +484,14 @@ async def perform_search(
         return
 
     await bot.send_message(chat_id, get_message(language, "searching"))
-    flights = await fetch_flights(origin, destination, departure_date)
+    flights = await fetch_flights(origin, destination, departure_date, language)
     if flights is None:
         await bot.send_message(chat_id, get_message(language, "error_fetch"))
     elif not flights:
         await bot.send_message(chat_id, get_message(language, "no_flights"))
     else:
         await enrich_airline_names(language, flights)
+        flights.sort(key=lambda item: str(item.get("departure_at", "")))
         await bot.send_message(chat_id, format_flights(language, flights))
 
     await state.update_data(origin=None, destination=None)
@@ -391,13 +499,20 @@ async def perform_search(
     await bot.send_message(chat_id, get_message(language, "ask_origin"))
 
 
-async def fetch_flights(origin: str, destination: str, departure_date: Optional[datetime]) -> Optional[List[Dict[str, Any]]]:
+async def fetch_flights(
+    origin: str,
+    destination: str,
+    departure_date: Optional[datetime],
+    language: str,
+) -> Optional[List[Dict[str, Any]]]:
+    currency = get_currency(language)
     params = {
         "origin": origin.upper(),
         "destination": destination.upper(),
         "limit": MAX_RESULTS,
         "one_way": "true",
         "token": API_TOKEN,
+        "currency": currency,
         "sorting": "price",
     }
     if departure_date:
@@ -436,7 +551,15 @@ def format_datetime(value: str) -> str:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return value
-    return dt.strftime("%Y-%m-%d %H:%M")
+    tz_suffix = ""
+    if dt.tzinfo is not None:
+        offset = dt.tzinfo.utcoffset(dt)
+        if offset is not None:
+            total_minutes = int(offset.total_seconds() // 60)
+            hours, minutes = divmod(abs(total_minutes), 60)
+            sign = "+" if total_minutes >= 0 else "-"
+            tz_suffix = f" (UTC{sign}{hours:02d}:{minutes:02d})"
+    return dt.strftime("%Y-%m-%d %H:%M") + tz_suffix
 
 
 def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
@@ -447,6 +570,7 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
         "airline": get_message(language, "airline"),
         "flight_number": get_message(language, "flight_number"),
         "price": get_message(language, "price"),
+        "aircraft": get_message(language, "aircraft"),
     }
     for flight in flights:
         departure = format_datetime(str(flight.get("departure_at", "-")))
@@ -456,6 +580,7 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
         price = flight.get("price")
         currency = flight.get("currency", "USD")
         price_value = f"{price} {currency}" if price is not None else "-"
+        aircraft = flight.get("aircraft") or flight.get("aircraft_code") or "-"
 
         flight_lines = [f"• {labels['departure']}: {departure}"]
         if arrival:
@@ -463,6 +588,7 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> str:
         flight_lines.append(f"  {labels['airline']}: {airline}")
         flight_lines.append(f"  {labels['flight_number']}: {flight_number}")
         flight_lines.append(f"  {labels['price']}: {price_value}")
+        flight_lines.append(f"  {labels['aircraft']}: {aircraft}")
 
         message_lines.append("\n".join(flight_lines))
 
@@ -478,6 +604,8 @@ bot = Bot(
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+init_db()
+
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -492,15 +620,39 @@ async def language_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     language_code = callback.data.split(":", maxsplit=1)[1]
     if language_code not in MESSAGES:
         language_code = "en"
-    await state.update_data(language=language_code)
-    await callback.message.answer(get_message(language_code, "ask_origin"))
+    await set_user_language(callback.from_user.id, language_code)
+    await state.update_data(language=language_code, origin=None, destination=None)
+    await state.set_state(FlightSearch.waiting_for_action)
+    await callback.message.answer(
+        get_message(language_code, "choose_action"),
+        reply_markup=build_main_menu(language_code),
+    )
+
+
+@dp.callback_query(F.data == ACTION_SEARCH)
+async def handle_search_action(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    language = await ensure_language(state, callback.from_user.id)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     await state.set_state(FlightSearch.waiting_for_origin)
+    await callback.message.answer(get_message(language, "ask_origin"))
+
+
+@dp.callback_query(F.data == ACTION_CHANGE_LANGUAGE)
+async def handle_change_language(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.clear()
+    keyboard = build_language_keyboard()
+    await callback.message.answer(f"👋\n{LANGUAGE_PROMPT}", reply_markup=keyboard)
 
 
 @dp.message(FlightSearch.waiting_for_origin)
 async def process_origin(message: Message, state: FSMContext) -> None:
+    language = await ensure_language(state, message.from_user.id)
     user_data = await state.get_data()
-    language = user_data.get("language", "en")
     raw_origin = message.text or ""
     origin = await resolve_location(raw_origin, language)
     if not origin:
@@ -515,8 +667,8 @@ async def process_origin(message: Message, state: FSMContext) -> None:
 
 @dp.message(FlightSearch.waiting_for_destination)
 async def process_destination(message: Message, state: FSMContext) -> None:
+    language = await ensure_language(state, message.from_user.id)
     user_data = await state.get_data()
-    language = user_data.get("language", "en")
     raw_destination = message.text or ""
     destination = await resolve_location(raw_destination, language)
     if not destination:
@@ -534,8 +686,8 @@ async def process_destination(message: Message, state: FSMContext) -> None:
 
 @dp.message(FlightSearch.waiting_for_date)
 async def process_date(message: Message, state: FSMContext) -> None:
+    language = await ensure_language(state, message.from_user.id)
     user_data = await state.get_data()
-    language = user_data.get("language", "en")
     raw_date = message.text.strip()
 
     departure_date: Optional[datetime] = None
@@ -557,8 +709,8 @@ async def process_date(message: Message, state: FSMContext) -> None:
 @dp.callback_query(F.data == SHOW_NEAREST_CALLBACK)
 async def show_nearest(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    language = await ensure_language(state, callback.from_user.id)
     user_data = await state.get_data()
-    language = user_data.get("language", "en")
     origin = user_data.get("origin")
     destination = user_data.get("destination")
 
