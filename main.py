@@ -7,16 +7,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (CallbackQuery, InlineKeyboardButton,
-                           InlineKeyboardMarkup, KeyboardButton, Message,
-                           ReplyKeyboardMarkup, ReplyKeyboardRemove)
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 API_TOKEN = "a89e7cbe4ff3ee19f171cab072b53881"
 TELEGRAM_TOKEN = "8396669139:AAFvr8gWi7uXDMwPLBePF9NmYf16wsHmtPU"
@@ -53,7 +51,6 @@ LANGUAGE_TO_LOCALE = {
     "en": "en",
 }
 
-SHOW_NEAREST_CALLBACK = "date:any"
 PAGE_SIZE = 200
 MAX_PAGES = 10
 TELEGRAM_MESSAGE_LIMIT = 3500
@@ -88,6 +85,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Введите новый город отправления, чтобы искать снова, или используйте /start для смены языка.",
         "missing_data": "Данные поиска устарели. Нажмите /start, чтобы начать заново.",
         "nearest_button": "Показать ближайшие рейсы",
+        "back": "⬅️ Назад",
         "departure": "Вылет",
         "arrival": "Прилет",
         "airline": "Авиакомпания",
@@ -112,6 +110,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Qayta qidirish uchun yangi uchish shahrini kiriting yoki tilni almashtirish uchun /start yuboring.",
         "missing_data": "Qidiruv ma'lumotlari eskirdi. /start yuborib yangidan boshlang.",
         "nearest_button": "Eng yaqin reyslar",
+        "back": "⬅️ Ortga",
         "departure": "Uchish",
         "arrival": "Qo'nish",
         "airline": "Aviakompaniya",
@@ -136,6 +135,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Барои ҷустуҷӯи дубора шаҳрро аз нав ворид кунед ё барои иваз кардани забон /start-ро истифода баред.",
         "missing_data": "Маълумоти ҷустуҷӯ куҳна шуд. Барои оғоз аз нав /start-ро фиристед.",
         "nearest_button": "Парвозҳои наздик",
+        "back": "⬅️ Бозгашт",
         "departure": "Парвоз",
         "arrival": "Фуруд",
         "airline": "Ширкати ҳавопаймоӣ",
@@ -160,6 +160,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Жаңа іздеу үшін ұшу қаласын қайта енгізіңіз немесе тілді ауыстыру үшін /start командасын пайдаланыңыз.",
         "missing_data": "Іздеу деректері ескірді. Қайта бастау үшін /start жіберіңіз.",
         "nearest_button": "Жақын рейстер",
+        "back": "⬅️ Артқа",
         "departure": "Ұшу",
         "arrival": "Қону",
         "airline": "Әуе компаниясы",
@@ -184,6 +185,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Жаңы издөө үчүн учуп чыгуучу шаардын кодун кайра жазыңыз же тилди алмаштыруу үчүн /start колдонуңуз.",
         "missing_data": "Издөө маалыматы эскирди. /start жөнөтүп кайра баштаңыз.",
         "nearest_button": "Жакынкы рейстер",
+        "back": "⬅️ Артка",
         "departure": "Учуу",
         "arrival": "Кону",
         "airline": "Авиакампания",
@@ -208,6 +210,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "new_search": "Enter a new departure city to search again or use /start to change the language.",
         "missing_data": "Search data is outdated. Send /start to begin again.",
         "nearest_button": "Show nearest flights",
+        "back": "⬅️ Back",
         "departure": "Departure",
         "arrival": "Arrival",
         "airline": "Airline",
@@ -247,20 +250,19 @@ def build_language_keyboard() -> ReplyKeyboardMarkup:
         buttons.append(row)
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
 
-
-def build_nearest_keyboard(language: str) -> InlineKeyboardMarkup:
-    button = InlineKeyboardButton(
-        text=get_message(language, "nearest_button"),
-        callback_data=SHOW_NEAREST_CALLBACK,
-    )
-    return InlineKeyboardMarkup(inline_keyboard=[[button]])
-
-
 def build_main_menu(language: str) -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text=get_message(language, "search_flights"))],
         [KeyboardButton(text=get_message(language, "change_language"))],
     ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+
+def build_search_keyboard(language: str, include_nearest: bool = False) -> ReplyKeyboardMarkup:
+    buttons: List[List[KeyboardButton]] = []
+    if include_nearest:
+        buttons.append([KeyboardButton(text=get_message(language, "nearest_button"))])
+    buttons.append([KeyboardButton(text=get_message(language, "back"))])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
@@ -485,7 +487,11 @@ async def perform_search(
         await bot.send_message(chat_id, get_message(language, "missing_data"))
         await state.update_data(origin=None, destination=None)
         await state.set_state(FlightSearch.waiting_for_origin)
-        await bot.send_message(chat_id, get_message(language, "ask_origin"))
+        await bot.send_message(
+            chat_id,
+            get_message(language, "ask_origin"),
+            reply_markup=build_search_keyboard(language),
+        )
         return
 
     await bot.send_message(chat_id, get_message(language, "searching"))
@@ -502,7 +508,11 @@ async def perform_search(
 
     await state.update_data(origin=None, destination=None)
     await state.set_state(FlightSearch.waiting_for_origin)
-    await bot.send_message(chat_id, get_message(language, "ask_origin"))
+    await bot.send_message(
+        chat_id,
+        get_message(language, "ask_origin"),
+        reply_markup=build_search_keyboard(language),
+    )
 
 
 async def fetch_flights(
@@ -755,7 +765,7 @@ async def handle_action_choice(message: Message, state: FSMContext) -> None:
         await state.set_state(FlightSearch.waiting_for_origin)
         await message.answer(
             get_message(language, "ask_origin"),
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=build_search_keyboard(language),
         )
         return
 
@@ -775,34 +785,61 @@ async def handle_action_choice(message: Message, state: FSMContext) -> None:
 @dp.message(FlightSearch.waiting_for_origin)
 async def process_origin(message: Message, state: FSMContext) -> None:
     language = await ensure_language(state, message.from_user.id)
-    user_data = await state.get_data()
-    raw_origin = message.text or ""
-    origin = await resolve_location(raw_origin, language)
+    text = (message.text or "").strip()
+    back_text = get_message(language, "back")
+    if text == back_text:
+        await state.update_data(origin=None, destination=None)
+        await state.set_state(FlightSearch.waiting_for_action)
+        await message.answer(
+            get_message(language, "choose_action"),
+            reply_markup=build_main_menu(language),
+        )
+        return
+
+    origin = await resolve_location(text, language)
     if not origin:
-        if raw_origin.strip():
+        if text:
             await message.answer(get_message(language, "invalid_city"))
-        await message.answer(get_message(language, "ask_origin"))
+        await message.answer(
+            get_message(language, "ask_origin"),
+            reply_markup=build_search_keyboard(language),
+        )
         return
     await state.update_data(origin=origin)
-    await message.answer(get_message(language, "ask_destination"))
+    await message.answer(
+        get_message(language, "ask_destination"),
+        reply_markup=build_search_keyboard(language),
+    )
     await state.set_state(FlightSearch.waiting_for_destination)
 
 
 @dp.message(FlightSearch.waiting_for_destination)
 async def process_destination(message: Message, state: FSMContext) -> None:
     language = await ensure_language(state, message.from_user.id)
-    user_data = await state.get_data()
-    raw_destination = message.text or ""
-    destination = await resolve_location(raw_destination, language)
+    text = (message.text or "").strip()
+    back_text = get_message(language, "back")
+    if text == back_text:
+        await state.update_data(destination=None)
+        await state.set_state(FlightSearch.waiting_for_origin)
+        await message.answer(
+            get_message(language, "ask_origin"),
+            reply_markup=build_search_keyboard(language),
+        )
+        return
+
+    destination = await resolve_location(text, language)
     if not destination:
-        if raw_destination.strip():
+        if text:
             await message.answer(get_message(language, "invalid_city"))
-        await message.answer(get_message(language, "ask_destination"))
+        await message.answer(
+            get_message(language, "ask_destination"),
+            reply_markup=build_search_keyboard(language),
+        )
         return
     await state.update_data(destination=destination)
     await message.answer(
         get_message(language, "ask_date"),
-        reply_markup=build_nearest_keyboard(language),
+        reply_markup=build_search_keyboard(language, include_nearest=True),
     )
     await state.set_state(FlightSearch.waiting_for_date)
 
@@ -811,38 +848,41 @@ async def process_destination(message: Message, state: FSMContext) -> None:
 async def process_date(message: Message, state: FSMContext) -> None:
     language = await ensure_language(state, message.from_user.id)
     user_data = await state.get_data()
-    raw_date = message.text.strip()
+    text = (message.text or "").strip()
+    back_text = get_message(language, "back")
+    nearest_text = get_message(language, "nearest_button")
+
+    if text == back_text:
+        await state.update_data(destination=None)
+        await state.set_state(FlightSearch.waiting_for_destination)
+        await message.answer(
+            get_message(language, "ask_destination"),
+            reply_markup=build_search_keyboard(language),
+        )
+        return
 
     departure_date: Optional[datetime] = None
-    if raw_date:
+    if text and text != nearest_text:
         try:
-            departure_date = datetime.strptime(raw_date, "%Y-%m-%d")
+            departure_date = datetime.strptime(text, "%Y-%m-%d")
         except ValueError:
             await message.answer(
                 get_message(language, "invalid_date"),
-                reply_markup=build_nearest_keyboard(language),
+                reply_markup=build_search_keyboard(language, include_nearest=True),
             )
             return
+    elif text == nearest_text:
+        departure_date = None
+    else:
+        await message.answer(
+            get_message(language, "ask_date"),
+            reply_markup=build_search_keyboard(language, include_nearest=True),
+        )
+        return
 
     origin = user_data.get("origin", "")
     destination = user_data.get("destination", "")
     await perform_search(message.chat.id, language, origin, destination, departure_date, state)
-
-
-@dp.callback_query(F.data == SHOW_NEAREST_CALLBACK)
-async def show_nearest(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    language = await ensure_language(state, callback.from_user.id)
-    user_data = await state.get_data()
-    origin = user_data.get("origin")
-    destination = user_data.get("destination")
-
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:  # pragma: no cover - message may be missing or already updated
-        pass
-
-    await perform_search(callback.message.chat.id, language, origin, destination, None, state)
 
 
 async def main() -> None:
