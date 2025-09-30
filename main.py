@@ -482,6 +482,7 @@ async def perform_search(
     destination: Optional[str],
     departure_date: Optional[datetime],
     state: FSMContext,
+    limit_results: Optional[int] = None,
 ) -> None:
     if not origin or not destination:
         await bot.send_message(chat_id, get_message(language, "missing_data"))
@@ -503,6 +504,8 @@ async def perform_search(
     else:
         await enrich_airline_names(language, flights)
         flights.sort(key=lambda item: str(item.get("departure_at", "")))
+        if isinstance(limit_results, int) and limit_results > 0:
+            flights = flights[:limit_results]
         for chunk in format_flights(language, flights):
             await bot.send_message(chat_id, chunk)
 
@@ -862,6 +865,7 @@ async def process_date(message: Message, state: FSMContext) -> None:
         return
 
     departure_date: Optional[datetime] = None
+    limit_results: Optional[int] = None
     if text and text != nearest_text:
         try:
             departure_date = datetime.strptime(text, "%Y-%m-%d")
@@ -873,6 +877,7 @@ async def process_date(message: Message, state: FSMContext) -> None:
             return
     elif text == nearest_text:
         departure_date = None
+        limit_results = 5
     else:
         await message.answer(
             get_message(language, "ask_date"),
@@ -882,7 +887,15 @@ async def process_date(message: Message, state: FSMContext) -> None:
 
     origin = user_data.get("origin", "")
     destination = user_data.get("destination", "")
-    await perform_search(message.chat.id, language, origin, destination, departure_date, state)
+    await perform_search(
+        message.chat.id,
+        language,
+        origin,
+        destination,
+        departure_date,
+        state,
+        limit_results=limit_results,
+    )
 
 
 async def main() -> None:
