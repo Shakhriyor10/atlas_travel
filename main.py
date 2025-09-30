@@ -15,7 +15,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (CallbackQuery, InlineKeyboardButton,
-                           InlineKeyboardMarkup, Message)
+                           InlineKeyboardMarkup, KeyboardButton, Message,
+                           ReplyKeyboardMarkup, ReplyKeyboardRemove)
 
 API_TOKEN = "a89e7cbe4ff3ee19f171cab072b53881"
 TELEGRAM_TOKEN = "8396669139:AAFvr8gWi7uXDMwPLBePF9NmYf16wsHmtPU"
@@ -53,8 +54,6 @@ LANGUAGE_TO_LOCALE = {
 }
 
 SHOW_NEAREST_CALLBACK = "date:any"
-ACTION_SEARCH = "action:search"
-ACTION_CHANGE_LANGUAGE = "action:change_language"
 PAGE_SIZE = 200
 MAX_PAGES = 10
 TELEGRAM_MESSAGE_LIMIT = 3500
@@ -219,6 +218,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
 }
 
 class FlightSearch(StatesGroup):
+    waiting_for_language = State()
     waiting_for_action = State()
     waiting_for_origin = State()
     waiting_for_destination = State()
@@ -232,17 +232,20 @@ def get_message(language: str, key: str) -> str:
     return MESSAGES["en"].get(key, "")
 
 
-def build_language_keyboard() -> InlineKeyboardMarkup:
-    buttons: List[List[InlineKeyboardButton]] = []
-    row: List[InlineKeyboardButton] = []
-    for idx, (code, label) in enumerate(LANGUAGE_OPTIONS, start=1):
-        row.append(InlineKeyboardButton(text=label, callback_data=f"lang:{code}"))
+LANGUAGE_LABEL_TO_CODE = {label: code for code, label in LANGUAGE_OPTIONS}
+
+
+def build_language_keyboard() -> ReplyKeyboardMarkup:
+    buttons: List[List[KeyboardButton]] = []
+    row: List[KeyboardButton] = []
+    for idx, (_, label) in enumerate(LANGUAGE_OPTIONS, start=1):
+        row.append(KeyboardButton(text=label))
         if idx % 2 == 0:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
 
 
 def build_nearest_keyboard(language: str) -> InlineKeyboardMarkup:
@@ -253,12 +256,12 @@ def build_nearest_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
-def build_main_menu(language: str) -> InlineKeyboardMarkup:
+def build_main_menu(language: str) -> ReplyKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text=get_message(language, "search_flights"), callback_data=ACTION_SEARCH)],
-        [InlineKeyboardButton(text=get_message(language, "change_language"), callback_data=ACTION_CHANGE_LANGUAGE)],
+        [KeyboardButton(text=get_message(language, "search_flights"))],
+        [KeyboardButton(text=get_message(language, "change_language"))],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
 def get_locale(language: str) -> str:
@@ -702,42 +705,71 @@ init_db()
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     keyboard = build_language_keyboard()
+    await state.set_state(FlightSearch.waiting_for_language)
     await message.answer(f"👋\n{LANGUAGE_PROMPT}", reply_markup=keyboard)
 
 
-@dp.callback_query(F.data.startswith("lang:"))
-async def language_chosen(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    language_code = callback.data.split(":", maxsplit=1)[1]
+def resolve_language_choice(text: str) -> Optional[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    direct = LANGUAGE_LABEL_TO_CODE.get(cleaned)
+    if direct:
+        return direct
+    lower = cleaned.casefold()
+    for code, label in LANGUAGE_OPTIONS:
+        if lower in {code.casefold(), label.casefold()}:
+            return code
+    return None
+
+
+@dp.message(FlightSearch.waiting_for_language)
+async def language_chosen(message: Message, state: FSMContext) -> None:
+    text = message.text or ""
+    language_code = resolve_language_choice(text)
+    if not language_code:
+        keyboard = build_language_keyboard()
+        await message.answer(f"👋\n{LANGUAGE_PROMPT}", reply_markup=keyboard)
+        return
+
     if language_code not in MESSAGES:
         language_code = "en"
-    await set_user_language(callback.from_user.id, language_code)
+
+    await set_user_language(message.from_user.id, language_code)
     await state.update_data(language=language_code, origin=None, destination=None)
     await state.set_state(FlightSearch.waiting_for_action)
-    await callback.message.answer(
+    await message.answer(
         get_message(language_code, "choose_action"),
         reply_markup=build_main_menu(language_code),
     )
 
 
-@dp.callback_query(F.data == ACTION_SEARCH)
-async def handle_search_action(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    language = await ensure_language(state, callback.from_user.id)
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-    await state.set_state(FlightSearch.waiting_for_origin)
-    await callback.message.answer(get_message(language, "ask_origin"))
+@dp.message(FlightSearch.waiting_for_action)
+async def handle_action_choice(message: Message, state: FSMContext) -> None:
+    language = await ensure_language(state, message.from_user.id)
+    text = (message.text or "").strip()
+    search_text = get_message(language, "search_flights")
+    change_text = get_message(language, "change_language")
 
+    if text == search_text:
+        await state.set_state(FlightSearch.waiting_for_origin)
+        await message.answer(
+            get_message(language, "ask_origin"),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
 
-@dp.callback_query(F.data == ACTION_CHANGE_LANGUAGE)
-async def handle_change_language(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    await state.clear()
-    keyboard = build_language_keyboard()
-    await callback.message.answer(f"👋\n{LANGUAGE_PROMPT}", reply_markup=keyboard)
+    if text == change_text:
+        await state.clear()
+        keyboard = build_language_keyboard()
+        await state.set_state(FlightSearch.waiting_for_language)
+        await message.answer(f"👋\n{LANGUAGE_PROMPT}", reply_markup=keyboard)
+        return
+
+    await message.answer(
+        get_message(language, "choose_action"),
+        reply_markup=build_main_menu(language),
+    )
 
 
 @dp.message(FlightSearch.waiting_for_origin)
