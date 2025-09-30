@@ -528,7 +528,7 @@ async def fetch_flights(
     if departure_date:
         date_filter = departure_date.date()
         date_filter_str = departure_date.strftime("%Y-%m-%d")
-        params["departure_at"] = f"{date_filter_str}:{date_filter_str}"
+        params["departure_at"] = date_filter_str
         params["depart_date"] = f"{date_filter_str}:{date_filter_str}"
 
     loop = asyncio.get_running_loop()
