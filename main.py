@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
@@ -501,8 +501,28 @@ async def perform_search(
     elif not flights:
         await bot.send_message(chat_id, get_message(language, "no_flights"))
     else:
+        fallback_dt = datetime.max.replace(tzinfo=timezone.utc)
+
+        def flight_sort_key(item: Dict[str, Any]) -> Tuple[datetime, str]:
+            departure_raw = item.get("departure_at")
+            if isinstance(departure_raw, str):
+                try:
+                    parsed = datetime.fromisoformat(departure_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    else:
+                        parsed = parsed.astimezone(timezone.utc)
+                    return parsed, departure_raw
+            return fallback_dt, str(departure_raw or "")
+
+        flights.sort(key=flight_sort_key)
+        if departure_date is None:
+            flights = flights[:5]
+
         await enrich_airline_names(language, flights)
-        flights.sort(key=lambda item: str(item.get("departure_at", "")))
         for chunk in format_flights(language, flights):
             await bot.send_message(chat_id, chunk)
 
