@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
@@ -523,10 +523,13 @@ async def fetch_flights(
         "locale": get_locale(language),
         "direct": "false",
     }
+    date_filter: Optional[date] = None
+    date_filter_str: Optional[str] = None
     if departure_date:
-        date_str = departure_date.strftime("%Y-%m-%d")
-        params["departure_at"] = date_str
-        params["depart_date"] = f"{date_str}:{date_str}"
+        date_filter = departure_date.date()
+        date_filter_str = departure_date.strftime("%Y-%m-%d")
+        params["departure_at"] = f"{date_filter_str}:{date_filter_str}"
+        params["depart_date"] = f"{date_filter_str}:{date_filter_str}"
 
     loop = asyncio.get_running_loop()
 
@@ -594,6 +597,21 @@ async def fetch_flights(
                 next_params = base_params.copy()
                 next_params["page"] = page_number
                 next_url = f"{API_URL}?{parse.urlencode(next_params)}"
+        if date_filter is not None:
+            filtered: List[Dict[str, Any]] = []
+            for item in collected:
+                departure_at = item.get("departure_at")
+                if not isinstance(departure_at, str):
+                    continue
+                try:
+                    parsed_dt = datetime.fromisoformat(departure_at.replace("Z", "+00:00"))
+                except ValueError:
+                    if date_filter_str and departure_at.startswith(date_filter_str):
+                        filtered.append(item)
+                    continue
+                if parsed_dt.date() == date_filter:
+                    filtered.append(item)
+            collected = filtered
         return collected
 
     return await loop.run_in_executor(None, _do_request)
