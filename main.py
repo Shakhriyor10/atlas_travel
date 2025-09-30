@@ -665,7 +665,7 @@ def format_flights(language: str, flights: List[Dict[str, Any]]) -> List[str]:
         airline = flight.get("airline_name") or flight.get("airline") or "-"
         flight_number = flight.get("flight_number") or flight.get("number") or "-"
         price = flight.get("price")
-        currency = flight.get("currency", "USD")
+        currency = get_currency(language)
         price_value = f"{price} {currency}" if price is not None else "-"
         aircraft = flight.get("aircraft") or flight.get("aircraft_code") or "-"
 
